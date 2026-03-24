@@ -1,0 +1,93 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: #0d0d1a;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+  overflow: hidden;
+}
+
+#game-container {
+  position: relative;
+  display: inline-block;
+  line-height: 0; /* removes gap below canvas */
+}
+
+/* Phaser injects its own <canvas> inside #game-container */
+canvas { display: block; }
+
+/* ─── HUD ───────────────────────────────────────────────────────────────── */
+#hud {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  pointer-events: none;
+  user-select: none;
+  z-index: 10;
+}
+
+#character-panel {
+  background: rgba(5, 5, 20, 0.82);
+  border: 1px solid #3a3a6a;
+  border-radius: 5px;
+  padding: 8px 10px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 8px;
+  backdrop-filter: blur(4px);
+}
+
+#char-portrait {
+  font-size: 26px;
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #1a1a3a;
+  border: 1px solid #4a4a8a;
+  border-radius: 4px;
+}
+
+#char-name {
+  font-size: 13px;
+  font-weight: bold;
+  color: #e8d090;
+  margin-bottom: 6px;
+  letter-spacing: 1px;
+}
+
+.stat-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stat-label { font-size: 10px; color: #888; width: 16px; }
+.stat-val   { font-size: 10px; color: #aaa; min-width: 60px; }
+
+.bar-bg {
+  width: 80px;
+  height: 7px;
+  background: #222;
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid #333;
+}
+
+.bar-fill { height: 100%; border-radius: 3px; transition: width 0.3s ease; }
+.hp-bar   { width: 100%; background: linear-gradient(90deg, #c0392b, #e74c3c); }
+
+#controls-hint {
+  background: rgba(5, 5, 20, 0.75);
+  color: #666;
+  font-size: 10px;
+  padding: 4px 8px;
+  border-radius: 3px;
+  border: 1px solid #2a2a4a;
+  letter-spacing: 0.5px;
+}

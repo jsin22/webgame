@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>City RPG</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="game-container">
+    <!--
+      Phaser is loaded from the local vendor file so the game works offline.
+      If you want to stay on the latest release online, swap the src to:
+      https://cdn.jsdelivr.net/npm/phaser@3.88.2/dist/phaser.min.js
+    -->
+    <script src="vendor/phaser.min.js"></script>
+
+    <!-- HUD overlay (sits on top of the Phaser canvas via CSS) -->
+    <div id="hud">
+      <div id="character-panel">
+        <div id="char-portrait">⚔</div>
+        <div id="char-stats">
+          <div id="char-name">Hero</div>
+          <div class="stat-row">
+            <span class="stat-label">HP</span>
+            <div class="bar-bg"><div class="bar-fill hp-bar" id="hp-bar"></div></div>
+            <span class="stat-val" id="hp-val">100/100</span>
+          </div>
+        </div>
+      </div>
+      <div id="controls-hint">WASD / Arrow Keys — move</div>
+    </div>
+
+    <!-- Phaser scenes -->
+    <script src="js/scenes/BootScene.js"></script>
+    <script src="js/scenes/GameScene.js"></script>
+    <script src="js/main.js"></script>
+  </div>
+</body>
+</html>

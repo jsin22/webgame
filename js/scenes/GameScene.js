@@ -154,9 +154,13 @@ class GameScene extends Phaser.Scene {
     // Listen for casino exit event to reset the flag and nudge the player
     this.game.events.on('casinoExit', () => {
       this.casinoActive = false;
+      document.getElementById('hud').style.display = '';
       // Push player south so they don't immediately re-trigger the entrance
       if (this.player) this.player.y += 96;
     }, this);
+
+    // Refresh HUD whenever this scene resumes (e.g. returning from casino)
+    this.events.on('resume', () => this._refreshHUD(), this);
 
     // ── HUD DOM refs ─────────────────────────────────────────────────────────
     this.hpBar      = document.getElementById('hp-bar');
@@ -238,6 +242,7 @@ class GameScene extends Phaser.Scene {
     this.casinoActive = true;
     this.casinoPrompt.setVisible(false);
     this.player.setVelocity(0, 0);
+    document.getElementById('hud').style.display = 'none';
     this.scene.pause();
     this.scene.launch('CasinoLobbyScene');
   }

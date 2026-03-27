@@ -18,7 +18,10 @@ const config = {
       debug:   false,          // set true to see hitboxes while developing
     },
   },
-  scene: [BootScene, GameScene],
+  scene: [BootScene, GameScene, CasinoLobbyScene, RouletteScene, BlackjackScene],
 };
 
 const game = new Phaser.Game(config);
+
+// Expose game instance on window so GameState can emit events to it
+window._phaserGame = game;

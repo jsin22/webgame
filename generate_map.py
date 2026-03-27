@@ -32,13 +32,17 @@ ROAD_W = 3
 # Blocks (blockCol, blockRow) that become parks instead of buildings
 PARK_BLOCKS = {(1,1),(2,4),(4,2),(3,3),(5,1),(0,4),(4,5)}
 
-GID_ROAD        = 1
-GID_ROAD_H      = 2
-GID_ROAD_V      = 3
-GID_SIDEWALK    = 4
+GID_ROAD         = 1
+GID_ROAD_H       = 2
+GID_ROAD_V       = 3
+GID_SIDEWALK     = 4
 GID_INTERSECTION = 5
-GID_GRASS       = 6
-GID_PARK        = 7
+GID_GRASS        = 6
+GID_PARK         = 7
+GID_CASINO       = 21   # row 2 col 0 in tileset — gold/neon casino tile
+
+# Block (blockCol, blockRow) reserved for the casino
+CASINO_BLOCK = (3, 2)
 
 def building_gid(bc, br):
     """Returns GID 11-20 based on block position."""
@@ -72,12 +76,13 @@ def tile_gids(col, row):
     if sw_x or sw_y:
         return GID_SIDEWALK, 0
 
-    # Building / park interior
-    is_park = (bc, br) in PARK_BLOCKS
-    if is_park:
-        return GID_PARK, 0          # park tile on ground layer, nothing on buildings layer
+    # Building / park / casino interior
+    if (bc, br) in PARK_BLOCKS:
+        return GID_PARK, 0
+    elif (bc, br) == CASINO_BLOCK:
+        return GID_SIDEWALK, GID_CASINO
     else:
-        return GID_SIDEWALK, building_gid(bc, br)  # sidewalk under building (ground), building above
+        return GID_SIDEWALK, building_gid(bc, br)
 
 # Build layer data arrays
 ground_data   = []
@@ -106,7 +111,7 @@ tiled_map = {
     "version": "1.10",
     "tiledversion": "1.10.0",
     "nextlayerid": 4,
-    "nextobjectid": 2,
+    "nextobjectid": 3,
     "layers": [
         {
             "id": 1,
@@ -145,6 +150,20 @@ tiled_map = {
                     "x": spawn_x,
                     "y": spawn_y,
                     "width": TS,
+                    "height": TS,
+                    "rotation": 0,
+                    "visible": True,
+                },
+                {
+                    # South-face entrance of the casino block (3,2).
+                    # Interior cols 34-38, south sidewalk row 29.
+                    # A 3-tile-wide door centred on col 36.
+                    "id": 2,
+                    "name": "casino_entrance",
+                    "type": "casino_entrance",
+                    "x": 35 * TS,
+                    "y": 29 * TS,
+                    "width":  3 * TS,
                     "height": TS,
                     "rotation": 0,
                     "visible": True,

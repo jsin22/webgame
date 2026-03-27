@@ -26,14 +26,24 @@
             <div class="bar-bg"><div class="bar-fill hp-bar" id="hp-bar"></div></div>
             <span class="stat-val" id="hp-val">100/100</span>
           </div>
+          <div class="stat-row">
+            <span class="stat-label">$</span>
+            <span class="stat-val money-val" id="money-val">$100</span>
+          </div>
         </div>
       </div>
-      <div id="controls-hint">WASD / Arrow Keys — move</div>
+      <div id="controls-hint">WASD / Arrows — move &nbsp;|&nbsp; E — interact</div>
     </div>
+
+    <!-- Global state (loaded before scenes) -->
+    <script src="js/GameState.js"></script>
 
     <!-- Phaser scenes -->
     <script src="js/scenes/BootScene.js"></script>
     <script src="js/scenes/GameScene.js"></script>
+    <script src="js/scenes/CasinoLobbyScene.js"></script>
+    <script src="js/scenes/RouletteScene.js"></script>
+    <script src="js/scenes/BlackjackScene.js"></script>
     <script src="js/main.js"></script>
   </div>
 </body>

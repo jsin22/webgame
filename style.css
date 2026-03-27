@@ -80,7 +80,8 @@ canvas { display: block; }
 }
 
 .bar-fill { height: 100%; border-radius: 3px; transition: width 0.3s ease; }
-.hp-bar   { width: 100%; background: linear-gradient(90deg, #c0392b, #e74c3c); }
+.hp-bar    { width: 100%; background: linear-gradient(90deg, #c0392b, #e74c3c); }
+.money-val { color: #50ff80; font-weight: bold; }
 
 #controls-hint {
   background: rgba(5, 5, 20, 0.75);

@@ -127,10 +127,47 @@ class GameScene extends Phaser.Scene {
     this.cameras.main.ignore(this.minimapDot);   // hide dot from main cam
     // minimapCam will show it automatically (it shows everything not ignored)
 
+    // ── Casino entrance ──────────────────────────────────────────────────────
+    const casinoObj = map.findObject('objects', o => o.name === 'casino_entrance');
+    if (casinoObj) {
+      this.casinoEntrancePos = {
+        x: casinoObj.x + casinoObj.width  / 2,
+        y: casinoObj.y + casinoObj.height / 2,
+      };
+    }
+    this.casinoActive = false; // true while casino scenes are running
+
+    // "Press E" prompt shown when near the entrance
+    this.casinoPrompt = this.add.text(0, 0, 'Press E to enter Casino', {
+      fontFamily: 'Courier New',
+      fontSize:   '12px',
+      color:      '#ffd700',
+      stroke:     '#000000',
+      strokeThickness: 3,
+      backgroundColor: '#00000066',
+      padding: { x: 6, y: 3 },
+    }).setOrigin(0.5, 1).setDepth(5).setVisible(false);
+
+    // Add E key
+    this.inputKeys.e = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
+
+    // Listen for casino exit event to reset the flag and nudge the player
+    this.game.events.on('casinoExit', () => {
+      this.casinoActive = false;
+      // Push player south so they don't immediately re-trigger the entrance
+      if (this.player) this.player.y += 96;
+    }, this);
+
     // ── HUD DOM refs ─────────────────────────────────────────────────────────
-    this.hpBar  = document.getElementById('hp-bar');
-    this.hpVal  = document.getElementById('hp-val');
+    this.hpBar      = document.getElementById('hp-bar');
+    this.hpVal      = document.getElementById('hp-val');
     this.charNameEl = document.getElementById('char-name');
+    this.moneyEl    = document.getElementById('money-val');
+
+    // Keep money HUD in sync with GameState
+    this.game.events.on('moneyChanged', v => {
+      if (this.moneyEl) this.moneyEl.textContent = `$${v}`;
+    }, this);
 
     // Player data (expandable later)
     this.playerData = { name: 'Hero', hp: 100, maxHp: 100 };
@@ -178,13 +215,38 @@ class GameScene extends Phaser.Scene {
     this.minimapDot.clear();
     this.minimapDot.fillStyle(0xf0e060, 1);
     this.minimapDot.fillCircle(this.player.x, this.player.y, 12); // large — minimap zoom shrinks it
+
+    // ── Casino entrance proximity ─────────────────────────────────────────────
+    if (this.casinoEntrancePos && !this.casinoActive) {
+      const dx   = this.player.x - this.casinoEntrancePos.x;
+      const dy   = this.player.y - this.casinoEntrancePos.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const near = dist < 80;
+
+      this.casinoPrompt
+        .setVisible(near)
+        .setPosition(this.player.x, this.player.y - 44);
+
+      if (near && Phaser.Input.Keyboard.JustDown(this.inputKeys.e)) {
+        this._enterCasino();
+      }
+    }
   }
 
   // ── Private helpers ─────────────────────────────────────────────────────────
+  _enterCasino() {
+    this.casinoActive = true;
+    this.casinoPrompt.setVisible(false);
+    this.player.setVelocity(0, 0);
+    this.scene.pause();
+    this.scene.launch('CasinoLobbyScene');
+  }
+
   _refreshHUD() {
     const { hp, maxHp, name } = this.playerData;
-    if (this.hpBar)  this.hpBar.style.width = (hp / maxHp * 100) + '%';
-    if (this.hpVal)  this.hpVal.textContent  = `${hp}/${maxHp}`;
-    if (this.charNameEl) this.charNameEl.textContent = name;
+    if (this.hpBar)      this.hpBar.style.width      = (hp / maxHp * 100) + '%';
+    if (this.hpVal)      this.hpVal.textContent       = `${hp}/${maxHp}`;
+    if (this.charNameEl) this.charNameEl.textContent  = name;
+    if (this.moneyEl)    this.moneyEl.textContent     = `$${GameState.money}`;
   }
 }

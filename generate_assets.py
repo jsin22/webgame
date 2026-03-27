@@ -178,6 +178,32 @@ def draw_water_tile(buf, bw, ox, oy):
     for i in range(4, TS, 8):
         draw_line_h(buf, bw, ox, oy + i, TS, WATER_LIGHT)
 
+def draw_casino_tile(buf, bw, ox, oy):
+    """Distinctive casino building tile — dark with gold trim and neon accents."""
+    base   = (18, 12, 35, 255)   # deep purple-black
+    gold   = (255, 200, 50, 255)
+    neon_p = (255, 50, 180, 255) # neon pink
+    neon_b = (50, 200, 255, 255) # neon blue
+
+    fill_rect(buf, bw, ox, oy, TS, TS, base)
+    # Gold border
+    draw_line_h(buf, bw, ox,     oy,          TS, gold)
+    draw_line_h(buf, bw, ox,     oy + TS - 1, TS, gold)
+    draw_line_v(buf, bw, ox,     oy,          TS, gold)
+    draw_line_v(buf, bw, ox + TS - 1, oy,     TS, gold)
+    # Neon dots along top and bottom edges
+    for i in range(3, TS - 3, 5):
+        c = neon_p if (i // 5) % 2 == 0 else neon_b
+        set_px(buf, bw, ox + i, oy + 2, c)
+        set_px(buf, bw, ox + i, oy + TS - 3, c)
+    # Central casino chip
+    fill_circle(buf, bw, ox + TS // 2, oy + TS // 2, 9,  gold)
+    fill_circle(buf, bw, ox + TS // 2, oy + TS // 2, 6,  base)
+    fill_circle(buf, bw, ox + TS // 2, oy + TS // 2, 3,  gold)
+    # Dollar sign hint — two short horizontal bars
+    fill_rect(buf, bw, ox + TS // 2 - 3, oy + TS // 2 - 4, 6, 2, neon_p)
+    fill_rect(buf, bw, ox + TS // 2 - 3, oy + TS // 2 + 2, 6, 2, neon_p)
+
 def draw_building_tile(buf, bw, ox, oy, idx):
     base, dark = BUILDING_COLORS[idx % len(BUILDING_COLORS)]
     fill_rect(buf, bw, ox, oy, TS, TS, base)
@@ -209,12 +235,18 @@ draw_water_tile       (buf, IMG_W,224,  0)
 draw_road_tile        (buf, IMG_W,256,  0)
 draw_sidewalk_tile    (buf, IMG_W,288,  0)
 
-# Rows 1-2: building variants (10 colours × 2 rows)
+# Row 1: building variants 0-9
 for i in range(10):
-    draw_building_tile(buf, IMG_W, i * TS, TS,      i)
-    draw_building_tile(buf, IMG_W, i * TS, TS * 2,  i)  # duplicate (lighter variant later)
+    draw_building_tile(buf, IMG_W, i * TS, TS, i)
+
+# Row 2: casino tile at col 0 (GID 21), then remaining building variants
+draw_casino_tile(buf, IMG_W, 0, TS * 2)                          # GID 21 — casino
+for i in range(1, 10):
+    draw_building_tile(buf, IMG_W, i * TS, TS * 2, i)
+
+# Row 3: building variants repeated
 for i in range(10):
-    draw_building_tile(buf, IMG_W, i * TS, TS * 3,  i)
+    draw_building_tile(buf, IMG_W, i * TS, TS * 3, i)
 
 os.makedirs('assets/tilesets', exist_ok=True)
 write_png_rgba('assets/tilesets/city_tiles.png', [tuple(p) for p in buf], IMG_W, IMG_H)

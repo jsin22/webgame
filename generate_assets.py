@@ -221,7 +221,6 @@ write_png_rgba('assets/tilesets/city_tiles.png', [tuple(p) for p in buf], IMG_W,
 print(f'Wrote assets/tilesets/city_tiles.png  ({IMG_W}x{IMG_H})')
 
 # ─── Player spritesheet ───────────────────────────────────────────────────────
-# 4 directions × 4 walk frames + 1 idle frame = 4 cols × ...
 # Layout: 4 columns (frames 0-3), 4 rows (down, left, right, up)
 # Frame size: 32 wide × 48 tall
 
@@ -233,15 +232,15 @@ ANIM_ROWS = 4   # directions: down, left, right, up
 SP_W = FW * ANIM_COLS
 SP_H = FH * ANIM_ROWS
 
-# Colors
-SKIN   = (245, 200, 130, 255)
-HAIR   = (100, 60, 20, 255)
-SHIRT  = (50, 130, 200, 255)
-PANTS  = (44, 62, 80, 255)
-SHOE   = (80, 50, 30, 255)
+# Requested Colors
+SKIN   = (115, 75, 45, 255)   # Brown skin
+HAIR   = (20, 20, 20, 255)    # Black hair
+SHIRT  = (255, 120, 30, 255)  # Orange top
+PANTS  = (30, 70, 150, 255)   # Blue pants
+SHOE   = (240, 240, 240, 255) # White sneakers
 SHADOW = (0, 0, 0, 60)
 WHITE  = (255, 255, 255, 255)
-EYE    = (30, 30, 40, 255)
+EYE    = (255, 255, 255, 255) # White eyes for visibility
 
 def draw_player_frame(buf, bw, ox, oy, direction, frame):
     """Draw one player frame at pixel offset (ox, oy)."""
@@ -249,98 +248,80 @@ def draw_player_frame(buf, bw, ox, oy, direction, frame):
     leg_offset = [0, 3, 0, -3][frame]
 
     cx = ox + FW // 2
-    cy = oy + FH // 2 + 6  # center Y of body
+    cy = oy + FH // 2 
 
-    # Shadow
+    # 1. Draw Shadow first (bottom layer)
     for dx in range(-10, 11):
         for dy in range(-4, 5):
             if dx*dx/100 + dy*dy/16 <= 1:
                 set_px(buf, bw, cx + dx, oy + FH - 6 + dy, SHADOW)
 
-    if direction == 0:  # down (facing viewer)
-        # Shoes
-        fill_rect(buf, bw, cx - 8, cy + 16 + leg_offset, 7, 5, SHOE)
-        fill_rect(buf, bw, cx + 1, cy + 16 - leg_offset, 7, 5, SHOE)
-        # Pants
+    if direction == 0:  # DOWN
+        # Legs/Pants
         fill_rect(buf, bw, cx - 8, cy + 8, 7, 10, PANTS)
         fill_rect(buf, bw, cx + 1, cy + 8, 7, 10, PANTS)
-        # Shirt/body
+        # Shoes (Drawn AFTER pants to be on top)
+        fill_rect(buf, bw, cx - 8, cy + 16 + leg_offset, 7, 5, SHOE)
+        fill_rect(buf, bw, cx + 1, cy + 16 - leg_offset, 7, 5, SHOE)
+        # Upper Body
         fill_rect(buf, bw, cx - 9, cy - 2, 18, 12, SHIRT)
-        # Arms
         fill_rect(buf, bw, cx - 13, cy, 5, 8, SKIN)
         fill_rect(buf, bw, cx + 8, cy, 5, 8, SKIN)
-        # Neck
         fill_rect(buf, bw, cx - 3, cy - 7, 6, 6, SKIN)
-        # Head
         fill_circle(buf, bw, cx, cy - 13, 9, SKIN)
-        # Hair
         fill_rect(buf, bw, cx - 9, cy - 22, 18, 8, HAIR)
         fill_circle(buf, bw, cx, cy - 19, 8, HAIR)
-        # Eyes
         fill_rect(buf, bw, cx - 5, cy - 14, 3, 3, EYE)
         fill_rect(buf, bw, cx + 2, cy - 14, 3, 3, EYE)
 
-    elif direction == 1:  # left
-        # Shoes
-        fill_rect(buf, bw, cx - 9, cy + 16 + leg_offset, 8, 5, SHOE)
-        fill_rect(buf, bw, cx - 9, cy + 16 - leg_offset, 8, 5, SHOE)
-        # Pants
-        fill_rect(buf, bw, cx - 9, cy + 8, 7, 10, PANTS)
-        fill_rect(buf, bw, cx - 3, cy + 8, 7, 10, PANTS)
+    elif direction == 1:  # LEFT
+        # Back Leg (Right leg)
+        fill_rect(buf, bw, cx - 2, cy + 8, 6, 10, PANTS)
+        fill_rect(buf, bw, cx - 2, cy + 16 - leg_offset, 7, 5, SHOE)
         # Body
-        fill_rect(buf, bw, cx - 10, cy - 2, 14, 12, SHIRT)
-        # Arm (visible one in front)
-        fill_rect(buf, bw, cx - 12, cy, 5, 8, SKIN)
-        # Neck
+        fill_rect(buf, bw, cx - 8, cy - 2, 12, 12, SHIRT)
+        # Front Leg (Left leg)
+        fill_rect(buf, bw, cx - 8, cy + 8, 6, 10, PANTS)
+        fill_rect(buf, bw, cx - 9, cy + 16 + leg_offset, 7, 5, SHOE)
+        # Head & Arm
+        fill_rect(buf, bw, cx - 10, cy, 4, 8, SKIN)
         fill_rect(buf, bw, cx - 5, cy - 7, 6, 6, SKIN)
-        # Head
         fill_circle(buf, bw, cx - 2, cy - 13, 9, SKIN)
-        # Hair
         fill_rect(buf, bw, cx - 11, cy - 22, 16, 8, HAIR)
         fill_circle(buf, bw, cx - 2, cy - 19, 8, HAIR)
-        # Eye (side)
         fill_rect(buf, bw, cx - 7, cy - 14, 3, 3, EYE)
 
-    elif direction == 2:  # right
-        # Shoes
-        fill_rect(buf, bw, cx + 1, cy + 16 + leg_offset, 8, 5, SHOE)
-        fill_rect(buf, bw, cx + 1, cy + 16 - leg_offset, 8, 5, SHOE)
-        # Pants
-        fill_rect(buf, bw, cx + 2, cy + 8, 7, 10, PANTS)
-        fill_rect(buf, bw, cx - 4, cy + 8, 7, 10, PANTS)
+    elif direction == 2:  # RIGHT
+        # Back Leg (Left leg)
+        fill_rect(buf, bw, cx - 4, cy + 8, 6, 10, PANTS)
+        fill_rect(buf, bw, cx - 5, cy + 16 - leg_offset, 7, 5, SHOE)
         # Body
-        fill_rect(buf, bw, cx - 4, cy - 2, 14, 12, SHIRT)
-        # Arm
-        fill_rect(buf, bw, cx + 7, cy, 5, 8, SKIN)
-        # Neck
+        fill_rect(buf, bw, cx - 4, cy - 2, 12, 12, SHIRT)
+        # Front Leg (Right leg)
+        fill_rect(buf, bw, cx + 2, cy + 8, 6, 10, PANTS)
+        fill_rect(buf, bw, cx + 2, cy + 16 + leg_offset, 7, 5, SHOE)
+        # Head & Arm
+        fill_rect(buf, bw, cx + 6, cy, 4, 8, SKIN)
         fill_rect(buf, bw, cx - 1, cy - 7, 6, 6, SKIN)
-        # Head
         fill_circle(buf, bw, cx + 2, cy - 13, 9, SKIN)
-        # Hair
+        # Hair/Eyes
         fill_rect(buf, bw, cx - 5, cy - 22, 16, 8, HAIR)
         fill_circle(buf, bw, cx + 2, cy - 19, 8, HAIR)
-        # Eye (side)
         fill_rect(buf, bw, cx + 4, cy - 14, 3, 3, EYE)
 
-    elif direction == 3:  # up (back of character)
-        # Shoes
-        fill_rect(buf, bw, cx - 8, cy + 16 + leg_offset, 7, 5, SHOE)
-        fill_rect(buf, bw, cx + 1, cy + 16 - leg_offset, 7, 5, SHOE)
-        # Pants
+    elif direction == 3:  # UP
         fill_rect(buf, bw, cx - 8, cy + 8, 7, 10, PANTS)
         fill_rect(buf, bw, cx + 1, cy + 8, 7, 10, PANTS)
-        # Body (back)
+        fill_rect(buf, bw, cx - 8, cy + 16 + leg_offset, 7, 5, SHOE)
+        fill_rect(buf, bw, cx + 1, cy + 16 - leg_offset, 7, 5, SHOE)
         fill_rect(buf, bw, cx - 9, cy - 2, 18, 12, SHIRT)
-        # Arms
         fill_rect(buf, bw, cx - 13, cy, 5, 8, SKIN)
         fill_rect(buf, bw, cx + 8, cy, 5, 8, SKIN)
-        # Neck
         fill_rect(buf, bw, cx - 3, cy - 7, 6, 6, SKIN)
-        # Head (back)
         fill_circle(buf, bw, cx, cy - 13, 9, SKIN)
-        # Hair (back — covers whole head)
         fill_circle(buf, bw, cx, cy - 13, 9, HAIR)
         fill_rect(buf, bw, cx - 9, cy - 22, 18, 10, HAIR)
+
 
 sp_buf = make_canvas_mut(SP_W, SP_H, (0, 0, 0, 0))
 DIRS = [0, 1, 2, 3]  # down, left, right, up
@@ -351,5 +332,6 @@ for row, direction in enumerate(DIRS):
 
 os.makedirs('assets/sprites', exist_ok=True)
 write_png_rgba('assets/sprites/player.png', [tuple(p) for p in sp_buf], SP_W, SP_H)
+
 print(f'Wrote assets/sprites/player.png  ({SP_W}x{SP_H})')
 print('Done.')

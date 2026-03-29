@@ -94,6 +94,7 @@ class CasinoLobbyScene extends Phaser.Scene {
   }
 
   _exitCasino() {
+    SaveManager.save();
     this.game.events.emit('casinoExit');
     this.scene.stop();
     this.scene.resume('GameScene');

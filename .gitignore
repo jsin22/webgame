@@ -13,4 +13,7 @@ Thumbs.db
 *.swp
 *.swo
 
-# vendor/phaser.min.js is intentionally committed for offline play
+# vendor/ files are intentionally committed for offline play
+
+# Runtime server data
+player_data.json

@@ -4,16 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>City RPG</title>
+  <link rel="icon" href="/favicon.ico" type="image/x-icon">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div id="game-container">
-    <!--
-      Phaser is loaded from the local vendor file so the game works offline.
-      If you want to stay on the latest release online, swap the src to:
-      https://cdn.jsdelivr.net/npm/phaser@3.88.2/dist/phaser.min.js
-    -->
     <script src="vendor/phaser.min.js"></script>
+    <!-- Socket.io v4 client (must match server: python-socketio 5.x / engineio 4.x) -->
+    <script src="/vendor/socket.io.min.js"></script>
 
     <!-- HUD overlay (sits on top of the Phaser canvas via CSS) -->
     <div id="hud">
@@ -27,16 +25,38 @@
             <span class="stat-val" id="hp-val">100/100</span>
           </div>
           <div class="stat-row">
+            <span class="stat-label">EN</span>
+            <div class="bar-bg"><div class="bar-fill energy-bar" id="energy-bar"></div></div>
+            <span class="stat-val" id="energy-val">100/100</span>
+          </div>
+          <div class="stat-row">
             <span class="stat-label">$</span>
             <span class="stat-val money-val" id="money-val">$100</span>
           </div>
         </div>
       </div>
+      <div id="time-panel">
+        <span id="day-val">Monday</span>
+        <span id="time-val">8:00 AM</span>
+        <span id="rank-val" class="rank-badge">Trainee</span>
+      </div>
       <div id="controls-hint">WASD / Arrows — move &nbsp;|&nbsp; E — interact</div>
     </div>
 
-    <!-- Global state (loaded before scenes) -->
+    <!-- Login overlay — shown until the player authenticates -->
+    <div id="login-overlay">
+      <div id="login-box">
+        <div id="login-title">⚔ CITY RPG</div>
+        <div id="login-subtitle">Enter a username to play</div>
+        <input id="username-input" type="text" placeholder="Username" maxlength="20" autocomplete="off" spellcheck="false">
+        <button id="login-btn">Enter City</button>
+        <div id="login-status"></div>
+      </div>
+    </div>
+
+    <!-- Global state and persistence (loaded before scenes) -->
     <script src="js/GameState.js"></script>
+    <script src="js/SaveManager.js"></script>
 
     <!-- Phaser scenes -->
     <script src="js/scenes/BootScene.js"></script>
@@ -44,7 +64,59 @@
     <script src="js/scenes/CasinoLobbyScene.js"></script>
     <script src="js/scenes/RouletteScene.js"></script>
     <script src="js/scenes/BlackjackScene.js"></script>
+    <script src="js/scenes/PizzeriaScene.js"></script>
     <script src="js/main.js"></script>
+
+    <script>
+      // ── Login flow ──────────────────────────────────────────────────────────
+      const loginOverlay = document.getElementById('login-overlay');
+      const loginBtn     = document.getElementById('login-btn');
+      const usernameInput = document.getElementById('username-input');
+      const loginStatus  = document.getElementById('login-status');
+
+      function attemptLogin() {
+        const username = usernameInput.value.trim();
+        if (!username) {
+          loginStatus.textContent = 'Please enter a username.';
+          return;
+        }
+
+        loginBtn.disabled   = true;
+        loginStatus.textContent = 'Connecting…';
+
+        const socket = io({ transports: ['polling'] });
+        window.socket = socket;
+
+        socket.on('connect', () => {
+          loginStatus.textContent = 'Connected — logging in…';
+          socket.emit('login', { username });
+        });
+
+        socket.on('login_success', data => {
+          loginOverlay.style.display = 'none';
+          // Pass login data to the Phaser game (GameScene listens for this)
+          if (window._phaserGame) {
+            window._phaserGame.events.emit('multiplayerLogin', data);
+          }
+        });
+
+        socket.on('connect_error', () => {
+          loginStatus.textContent = 'Could not reach server. Is app.py running?';
+          loginBtn.disabled = false;
+          socket.disconnect();
+          window.socket = null;
+        });
+      }
+
+      loginBtn.addEventListener('click', attemptLogin);
+      usernameInput.addEventListener('keydown', e => {
+        e.stopPropagation();  // prevent Phaser from calling preventDefault() on WASD/E
+        if (e.key === 'Enter') attemptLogin();
+      });
+
+      // Auto-focus the input once the page loads
+      window.addEventListener('load', () => usernameInput.focus());
+    </script>
   </div>
 </body>
 </html>

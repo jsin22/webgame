@@ -3,9 +3,9 @@
 ## Running the game
 
 ```bash
-pip install -r requirements.txt   # first time only
-make                               # starts server on port 8080
-make PORT=3000                     # custom port
+make install      # first time only — installs all dependencies
+make serve        # starts server on port 8080
+make serve PORT=3000  # custom port
 ```
 
 Open `http://localhost:8080`, enter a username, and play.

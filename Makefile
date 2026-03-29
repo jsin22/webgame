@@ -1,8 +1,7 @@
 PORT ?= 8080
 
 install:
-	sudo apt-get install -y python3-flask python3-flask-socketio python3-eventlet python3-pip
-	python3 -m pip install simple-websocket --break-system-packages
+	bash install.sh
 
 serve:
 	python3 app.py --port $(PORT)

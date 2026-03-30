@@ -18,8 +18,6 @@ class GameScene extends Phaser.Scene {
   }
 
   create() {
-    // ── Restore save (if any) ─────────────────────────────────────────────────
-    SaveManager.load();
 
     // ── Tilemap ──────────────────────────────────────────────────────────────
     const map = this.make.tilemap({ key: 'city_map' });
@@ -201,8 +199,7 @@ class GameScene extends Phaser.Scene {
     // Keep HUD in sync with GameState events
     this.game.events.on('moneyChanged', v => {
       if (this.moneyEl) this.moneyEl.textContent = `$${v}`;
-      // Persist wallet to server on every money change
-      if (window.socket) window.socket.emit('save_state', { money: v });
+      SaveManager.save();
     }, this);
 
     this.game.events.on('timeChanged', () => this._refreshTime(), this);
@@ -334,19 +331,15 @@ class GameScene extends Phaser.Scene {
   _initMultiplayer(data) {
     const { username, player, others } = data;
 
-    // Restore this player's saved position and wallet
+    // Restore saved position and all game state from server
     this.player.setPosition(player.x, player.y);
     this.nameTag.setText(username);
     this.playerData.name = username;
     if (this.charNameEl) this.charNameEl.textContent = username;
 
-    if (player.money !== undefined) {
-      GameState.money = player.money;
-      if (this.moneyEl) this.moneyEl.textContent = `$${GameState.money}`;
-    }
-
-    // Apply character appearance (gender + clothing colors)
-    if (window.characterData) this._applyCharacterLayers(window.characterData);
+    SaveManager.loadFromServer(player);
+    this._applyCharacterLayers(player);
+    this._refreshHUD();
 
     // Render players already online
     Object.entries(others || {}).forEach(([uname, pdata]) => {

@@ -12,8 +12,10 @@ Sharing with friends (pick one):
 """
 
 import argparse
+import base64
 import json
 import os
+import re
 
 from flask import Flask, send_from_directory, request
 from flask_socketio import SocketIO, emit
@@ -24,13 +26,18 @@ socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading',
                     allow_upgrades=False)
 
 # ── Player store ───────────────────────────────────────────────────────────────
-# username → {x, y, facing, money}   (sid added while connected, stripped on save)
+# key (lowercase username) → full player record
 players: dict = {}
-sid_to_username: dict = {}
+sid_to_key: dict = {}
 
 SAVE_FILE = os.path.join(os.path.dirname(__file__), 'player_data.json')
 
-DEFAULT_PLAYER = {'x': 976.0, 'y': 976.0, 'facing': 'down', 'money': 100}
+DEFAULT_PLAYER = {
+    'x': 976.0, 'y': 976.0, 'facing': 'down',
+    'money': 100, 'hp': 100, 'energy': 100, 'xp': 0,
+    'jobRank': 0, 'shiftsWorked': 0,
+    'hour': 8, 'minute': 0, 'day': 1, '_clockMs': 0,
+}
 
 
 def _load():
@@ -45,8 +52,8 @@ def _load():
 
 def _save():
     to_disk = {
-        uname: {k: v for k, v in data.items() if k != 'sid'}
-        for uname, data in players.items()
+        key: {k: v for k, v in data.items() if k != 'sid'}
+        for key, data in players.items()
     }
     try:
         with open(SAVE_FILE, 'w') as f:
@@ -57,12 +64,26 @@ def _save():
 
 def _public(data: dict) -> dict:
     """Strip internal fields before sending to clients."""
-    return {k: v for k, v in data.items() if k != 'sid'}
+    return {k: v for k, v in data.items() if k not in ('sid', 'password')}
+
+
+def _finish_login(key: str):
+    """Shared logic after register or login succeeds."""
+    sid = request.sid
+    sid_to_key[sid] = key
+    players[key]['sid'] = sid
+
+    others = {
+        k: _public(p)
+        for k, p in players.items()
+        if k != key and 'sid' in p
+    }
+    return others
 
 
 # Load persisted player data on startup
-for _uname, _data in _load().items():
-    players[_uname] = dict(_data)
+for _key, _data in _load().items():
+    players[_key] = dict(_data)
 
 
 # ── Static file serving ────────────────────────────────────────────────────────
@@ -77,82 +98,125 @@ def static_files(path):
 
 
 # ── Socket events ──────────────────────────────────────────────────────────────
+
+@socketio.on('register')
+def handle_register(data):
+    username = str(data.get('username', '')).strip()[:20]
+    password = str(data.get('password', ''))
+    gender   = str(data.get('gender', 'male'))
+    colors   = data.get('colors', {})
+
+    if len(username) < 2:
+        emit('register_error', {'error': 'Username must be at least 2 characters.'})
+        return
+    if not re.match(r'^[a-zA-Z0-9_]+$', username):
+        emit('register_error', {'error': 'Username: letters, numbers, _ only.'})
+        return
+    if len(password) < 4:
+        emit('register_error', {'error': 'Password must be at least 4 characters.'})
+        return
+
+    key = username.lower()
+    if key in players:
+        emit('register_error', {'error': 'Username already taken.'})
+        return
+
+    players[key] = {
+        **dict(DEFAULT_PLAYER),
+        'username': username,
+        'password': base64.b64encode(password.encode()).decode(),
+        'gender':   gender,
+        'colors':   colors,
+    }
+    _save()
+
+    others = _finish_login(key)
+    emit('register_success', {
+        'username': username,
+        'player':   _public(players[key]),
+        'others':   others,
+    })
+    emit('player_joined', {'username': username, 'player': _public(players[key])},
+         broadcast=True, include_self=False)
+    print(f'[+] {username} registered')
+
+
 @socketio.on('login')
 def handle_login(data):
     username = str(data.get('username', '')).strip()[:20]
-    if not username:
+    password = str(data.get('password', ''))
+
+    key = username.lower()
+    rec = players.get(key)
+
+    if not rec:
+        emit('login_error', {'error': 'Username not found.'})
+        return
+    if 'password' not in rec:
+        emit('login_error', {'error': 'Account has no password — please re-register.'})
         return
 
-    sid = request.sid
-    sid_to_username[sid] = username
+    try:
+        stored = base64.b64decode(rec['password'].encode()).decode()
+    except Exception:
+        emit('login_error', {'error': 'Incorrect password.'})
+        return
+    if stored != password:
+        emit('login_error', {'error': 'Incorrect password.'})
+        return
 
-    # Create new player or restore existing
-    if username not in players:
-        players[username] = dict(DEFAULT_PLAYER)
-    players[username]['sid'] = sid
-
-    # Currently online players (excluding self)
-    others = {
-        uname: _public(pdata)
-        for uname, pdata in players.items()
-        if uname != username and 'sid' in pdata
-    }
-
-    # Reply to logging-in client
+    others = _finish_login(key)
     emit('login_success', {
-        'username': username,
-        'player':   _public(players[username]),
+        'username': rec.get('username', username),
+        'player':   _public(players[key]),
         'others':   others,
     })
-
-    # Announce arrival to everyone else
-    emit('player_joined', {
-        'username': username,
-        'player':   _public(players[username]),
-    }, broadcast=True, include_self=False)
-
-    print(f'[+] {username} connected  ({len(others)} others online)')
+    emit('player_joined', {'username': rec.get('username', username), 'player': _public(players[key])},
+         broadcast=True, include_self=False)
+    print(f'[+] {rec.get("username", username)} connected  ({len(others)} others online)')
 
 
 @socketio.on('move')
 def handle_move(data):
-    sid      = request.sid
-    username = sid_to_username.get(sid)
-    if not username:
+    key = sid_to_key.get(request.sid)
+    if not key:
         return
 
-    players[username]['x']      = float(data.get('x', DEFAULT_PLAYER['x']))
-    players[username]['y']      = float(data.get('y', DEFAULT_PLAYER['y']))
-    players[username]['facing'] = str(data.get('facing', 'down'))
+    players[key]['x']      = float(data.get('x', DEFAULT_PLAYER['x']))
+    players[key]['y']      = float(data.get('y', DEFAULT_PLAYER['y']))
+    players[key]['facing'] = str(data.get('facing', 'down'))
 
     emit('player_moved', {
-        'username': username,
-        'x':        players[username]['x'],
-        'y':        players[username]['y'],
-        'facing':   players[username]['facing'],
+        'username': players[key].get('username', key),
+        'x':        players[key]['x'],
+        'y':        players[key]['y'],
+        'facing':   players[key]['facing'],
     }, broadcast=True, include_self=False)
 
 
 @socketio.on('save_state')
 def handle_save_state(data):
-    """Client emits this after earning/spending money (casino, pizzeria)."""
-    sid      = request.sid
-    username = sid_to_username.get(sid)
-    if not username:
+    """Client emits this after earning/spending money or finishing a shift."""
+    key = sid_to_key.get(request.sid)
+    if not key:
         return
-    if 'money' in data:
-        players[username]['money'] = int(data['money'])
+
+    saveable = ('money', 'hp', 'energy', 'xp', 'jobRank',
+                'shiftsWorked', 'hour', 'minute', 'day', '_clockMs')
+    for field in saveable:
+        if field in data:
+            players[key][field] = data[field]
     _save()
 
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    sid      = request.sid
-    username = sid_to_username.pop(sid, None)
-    if not username:
+    key = sid_to_key.pop(request.sid, None)
+    if not key:
         return
-    if username in players:
-        players[username].pop('sid', None)
+    username = players[key].get('username', key) if key in players else key
+    if key in players:
+        players[key].pop('sid', None)
     _save()
     emit('player_left', {'username': username}, broadcast=True)
     print(f'[-] {username} disconnected')

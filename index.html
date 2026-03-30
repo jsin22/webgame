@@ -46,7 +46,6 @@
     <!-- Global state and persistence (loaded before scenes) -->
     <script src="js/GameState.js"></script>
     <script src="js/SaveManager.js"></script>
-    <script src="js/PlayerAuth.js"></script>
     <script src="js/CharacterCreator.js"></script>
 
     <!-- Phaser scenes -->
@@ -59,38 +58,17 @@
     <script src="js/main.js"></script>
 
     <script>
-      // ── Character creator + multiplayer login ───────────────────────────────
+      // ── Connect to server, then show character creator ──────────────────────
       window.addEventListener('load', () => {
-        CharacterCreator.show(playerData => {
-          // Store character data globally so GameScene can apply appearance
-          window.characterData = playerData;
+        const socket = io({ transports: ['polling'] });
+        window.socket = socket;
 
-          // Connect to the multiplayer server
-          const socket = io({ transports: ['polling'] });
-          window.socket = socket;
+        socket.on('connect', () => {
+          CharacterCreator.show();
+        });
 
-          socket.on('connect', () => {
-            socket.emit('login', { username: playerData.username });
-          });
-
-          socket.on('login_success', data => {
-            if (window._phaserGame) {
-              window._phaserGame.events.emit('multiplayerLogin', data);
-            }
-          });
-
-          socket.on('connect_error', () => {
-            // No server — fall back to single-player with default spawn
-            socket.disconnect();
-            window.socket = null;
-            if (window._phaserGame) {
-              window._phaserGame.events.emit('multiplayerLogin', {
-                username: playerData.username,
-                player: { x: 480, y: 512, money: 100 },
-                others: {},
-              });
-            }
-          });
+        socket.on('connect_error', () => {
+          CharacterCreator.showError('Cannot connect to server. Is app.py running?');
         });
       });
     </script>

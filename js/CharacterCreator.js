@@ -25,10 +25,25 @@ const CharacterCreator = {
     { name: 'White',  hex: '#d8d8d8' },
   ],
 
-  show(onComplete) {
-    this._onComplete = onComplete;
+  show() {
+    if (document.getElementById('creator-overlay')) return; // already shown
     this._buildOverlay();
     this._renderPreview();
+  },
+
+  showError(msg) {
+    let overlay = document.getElementById('creator-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'creator-overlay';
+      overlay.innerHTML = `<div id="creator-box">
+        <div id="creator-title">⚔ CITY RPG</div>
+        <div class="cc-status error" id="cc-conn-err"></div>
+      </div>`;
+      (document.getElementById('game-container') || document.body).appendChild(overlay);
+    }
+    const el = document.getElementById('cc-conn-err');
+    if (el) el.textContent = msg;
   },
 
   _buildOverlay() {
@@ -167,6 +182,7 @@ const CharacterCreator = {
     const password = document.getElementById('cc-pass').value;
     const confirm  = document.getElementById('cc-confirm').value;
     const status   = document.getElementById('cc-status');
+    const btn      = document.getElementById('cc-btn-create');
 
     if (password !== confirm) {
       status.textContent = 'Passwords do not match.';
@@ -174,35 +190,55 @@ const CharacterCreator = {
       return;
     }
 
-    const result = PlayerAuth.register(username, password, this._state.gender, { ...this._state.colors });
-    if (!result.ok) {
-      status.textContent = result.error;
-      status.className = 'cc-status error';
-      return;
-    }
+    btn.disabled = true;
+    status.textContent = 'Creating account…';
+    status.className = 'cc-status';
 
-    this._complete(result.player);
+    window.socket.emit('register', {
+      username, password,
+      gender: this._state.gender,
+      colors: { ...this._state.colors },
+    });
+
+    window.socket.once('register_success', data => {
+      this._complete(data);
+    });
+    window.socket.once('register_error', data => {
+      status.textContent = data.error;
+      status.className = 'cc-status error';
+      btn.disabled = false;
+    });
   },
 
   _doLogin() {
     const username = document.getElementById('cl-uname').value.trim();
     const password = document.getElementById('cl-pass').value;
     const status   = document.getElementById('cl-status');
+    const btn      = document.getElementById('cc-btn-login');
 
-    const result = PlayerAuth.login(username, password);
-    if (!result.ok) {
-      status.textContent = result.error;
+    btn.disabled = true;
+    status.textContent = 'Logging in…';
+    status.className = 'cc-status';
+
+    window.socket.emit('login', { username, password });
+
+    window.socket.once('login_success', data => {
+      this._complete(data);
+    });
+    window.socket.once('login_error', data => {
+      status.textContent = data.error;
       status.className = 'cc-status error';
-      return;
-    }
-
-    this._complete(result.player);
+      btn.disabled = false;
+    });
   },
 
-  _complete(player) {
+  _complete(loginData) {
+    window.characterData = loginData.player;
     const overlay = document.getElementById('creator-overlay');
     if (overlay) overlay.remove();
-    if (this._onComplete) this._onComplete(player);
+    if (window._phaserGame) {
+      window._phaserGame.events.emit('multiplayerLogin', loginData);
+    }
   },
 
   _renderPreview() {

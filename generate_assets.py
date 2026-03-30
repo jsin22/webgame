@@ -105,6 +105,38 @@ TREE_LIGHT       = (55, 160, 70, 255)
 WATER_COLOR      = (50, 130, 200, 255)
 WATER_LIGHT      = (80, 160, 220, 255)
 
+# ─── Pixel font (4×5, except I which is 3×5) ─────────────────────────────────
+FONT = {
+    'C': [[0,1,1,0],[1,0,0,0],[1,0,0,0],[1,0,0,0],[0,1,1,0]],
+    'A': [[0,1,1,0],[1,0,0,1],[1,1,1,1],[1,0,0,1],[1,0,0,1]],
+    'S': [[0,1,1,1],[1,0,0,0],[0,1,1,0],[0,0,0,1],[1,1,1,0]],
+    'I': [[1,1,1],[0,1,0],[0,1,0],[0,1,0],[1,1,1]],
+    'N': [[1,0,0,1],[1,1,0,1],[1,0,1,1],[1,0,0,1],[1,0,0,1]],
+    'O': [[0,1,1,0],[1,0,0,1],[1,0,0,1],[1,0,0,1],[0,1,1,0]],
+    'P': [[1,1,1,0],[1,0,0,1],[1,1,1,0],[1,0,0,0],[1,0,0,0]],
+    'Z': [[1,1,1,1],[0,0,1,0],[0,1,0,0],[1,0,0,0],[1,1,1,1]],
+}
+
+def _text_width(text):
+    total = 0
+    for i, ch in enumerate(text.upper()):
+        g = FONT.get(ch)
+        if g:
+            total += len(g[0]) + (1 if i < len(text) - 1 else 0)
+    return total
+
+def draw_text_px(buf, bw, x, y, text, color):
+    cx = x
+    for ch in text.upper():
+        g = FONT.get(ch)
+        if g is None:
+            cx += 4; continue
+        for ri, row in enumerate(g):
+            for ci, bit in enumerate(row):
+                if bit:
+                    set_px(buf, bw, cx + ci, y + ri, color)
+        cx += len(g[0]) + 1
+
 BUILDING_COLORS = [
     ((140, 50, 50, 255),   (100, 35, 35, 255)),   # red
     ((50, 80, 150, 255),   (35, 60, 120, 255)),   # blue
@@ -179,30 +211,51 @@ def draw_water_tile(buf, bw, ox, oy):
         draw_line_h(buf, bw, ox, oy + i, TS, WATER_LIGHT)
 
 def draw_casino_tile(buf, bw, ox, oy):
-    """Distinctive casino building tile — dark with gold trim and neon accents."""
-    base   = (18, 12, 35, 255)   # deep purple-black
+    """Casino building tile — dark with gold trim and 'CASINO' spelled out."""
+    base   = (18, 12, 35, 255)
     gold   = (255, 200, 50, 255)
-    neon_p = (255, 50, 180, 255) # neon pink
-    neon_b = (50, 200, 255, 255) # neon blue
+    neon_p = (255, 50, 180, 255)
+    neon_b = (50, 200, 255, 255)
 
     fill_rect(buf, bw, ox, oy, TS, TS, base)
     # Gold border
-    draw_line_h(buf, bw, ox,     oy,          TS, gold)
-    draw_line_h(buf, bw, ox,     oy + TS - 1, TS, gold)
-    draw_line_v(buf, bw, ox,     oy,          TS, gold)
-    draw_line_v(buf, bw, ox + TS - 1, oy,     TS, gold)
+    draw_line_h(buf, bw, ox, oy,          TS, gold)
+    draw_line_h(buf, bw, ox, oy + TS - 1, TS, gold)
+    draw_line_v(buf, bw, ox, oy,          TS, gold)
+    draw_line_v(buf, bw, ox + TS - 1, oy, TS, gold)
     # Neon dots along top and bottom edges
     for i in range(3, TS - 3, 5):
         c = neon_p if (i // 5) % 2 == 0 else neon_b
-        set_px(buf, bw, ox + i, oy + 2, c)
-        set_px(buf, bw, ox + i, oy + TS - 3, c)
-    # Central casino chip
-    fill_circle(buf, bw, ox + TS // 2, oy + TS // 2, 9,  gold)
-    fill_circle(buf, bw, ox + TS // 2, oy + TS // 2, 6,  base)
-    fill_circle(buf, bw, ox + TS // 2, oy + TS // 2, 3,  gold)
-    # Dollar sign hint — two short horizontal bars
-    fill_rect(buf, bw, ox + TS // 2 - 3, oy + TS // 2 - 4, 6, 2, neon_p)
-    fill_rect(buf, bw, ox + TS // 2 - 3, oy + TS // 2 + 2, 6, 2, neon_p)
+        set_px(buf, bw, ox + i, oy + 2,        c)
+        set_px(buf, bw, ox + i, oy + TS - 3,   c)
+    # "CASINO" spelled out in gold, centered
+    tw = _text_width('CASINO')
+    tx = ox + (TS - tw) // 2
+    ty = oy + (TS - 5) // 2
+    draw_text_px(buf, bw, tx, ty, 'CASINO', gold)
+
+def draw_pizzeria_tile(buf, bw, ox, oy):
+    """Pizzeria building tile — warm brick red with 'PIZZA' spelled out."""
+    base   = (170, 50, 20, 255)
+    dark   = (110, 28, 10, 255)
+    cream  = (255, 220, 160, 255)
+    yellow = (255, 220, 30,  255)
+
+    fill_rect(buf, bw, ox, oy, TS, TS, base)
+    # Dark border
+    draw_line_h(buf, bw, ox, oy,          TS, dark)
+    draw_line_h(buf, bw, ox, oy + TS - 1, TS, dark)
+    draw_line_v(buf, bw, ox, oy,          TS, dark)
+    draw_line_v(buf, bw, ox + TS - 1, oy, TS, dark)
+    # Cream dots along top and bottom edges
+    for i in range(3, TS - 3, 5):
+        set_px(buf, bw, ox + i, oy + 2,      cream)
+        set_px(buf, bw, ox + i, oy + TS - 3, cream)
+    # "PIZZA" spelled out in yellow, centered
+    tw = _text_width('PIZZA')
+    tx = ox + (TS - tw) // 2
+    ty = oy + (TS - 5) // 2
+    draw_text_px(buf, bw, tx, ty, 'PIZZA', yellow)
 
 def draw_building_tile(buf, bw, ox, oy, idx):
     base, dark = BUILDING_COLORS[idx % len(BUILDING_COLORS)]
@@ -239,9 +292,10 @@ draw_sidewalk_tile    (buf, IMG_W,288,  0)
 for i in range(10):
     draw_building_tile(buf, IMG_W, i * TS, TS, i)
 
-# Row 2: casino tile at col 0 (GID 21), then remaining building variants
-draw_casino_tile(buf, IMG_W, 0, TS * 2)                          # GID 21 — casino
-for i in range(1, 10):
+# Row 2: named building tiles then remaining variants
+draw_casino_tile   (buf, IMG_W,  0,      TS * 2)   # GID 21 — casino
+draw_pizzeria_tile (buf, IMG_W,  TS,     TS * 2)   # GID 22 — pizzeria
+for i in range(2, 10):
     draw_building_tile(buf, IMG_W, i * TS, TS * 2, i)
 
 # Row 3: building variants repeated

@@ -56,10 +56,12 @@ class GameScene extends Phaser.Scene {
     // mirror its frame each update so clothing can be tinted independently.
     this.player.setAlpha(0);   // invisible — visual layers take over
 
-    this.playerBody  = this.add.sprite(spawnX, spawnY, 'player_body_male', 0).setDepth(2);
-    this.playerShirt = this.add.sprite(spawnX, spawnY, 'player_shirt',     0).setDepth(2).setTint(0x2855d4);
-    this.playerPants = this.add.sprite(spawnX, spawnY, 'player_pants',     0).setDepth(2).setTint(0x1a1a1a);
-    this.playerShoes = this.add.sprite(spawnX, spawnY, 'player_shoes',     0).setDepth(2).setTint(0x6a3010);
+    // Depth order matters at the pants/shoe overlap: shoes(2.1) render below pants(2.3)
+    // so the bottom of the pants always covers the top edge of the shoes.
+    this.playerBody  = this.add.sprite(spawnX, spawnY, 'player_body_male', 0).setDepth(2.0);
+    this.playerShirt = this.add.sprite(spawnX, spawnY, 'player_shirt',     0).setDepth(2.2).setTint(0x2855d4);
+    this.playerShoes = this.add.sprite(spawnX, spawnY, 'player_shoes',     0).setDepth(2.1).setTint(0x6a3010);
+    this.playerPants = this.add.sprite(spawnX, spawnY, 'player_pants',     0).setDepth(2.3).setTint(0x1a1a1a);
 
     // ── Animations ───────────────────────────────────────────────────────────
     const anims = this.anims;

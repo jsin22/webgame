@@ -39,10 +39,12 @@ GID_SIDEWALK     = 4
 GID_INTERSECTION = 5
 GID_GRASS        = 6
 GID_PARK         = 7
-GID_CASINO       = 21   # row 2 col 0 in tileset — gold/neon casino tile
+GID_CASINO       = 21   # row 2 col 0 in tileset — casino tile
+GID_PIZZERIA     = 22   # row 2 col 1 in tileset — pizzeria tile
 
-# Block (blockCol, blockRow) reserved for the casino
-CASINO_BLOCK = (3, 2)
+# Blocks reserved for named venues
+CASINO_BLOCK   = (3, 2)
+PIZZERIA_BLOCK = (1, 2)
 
 def building_gid(bc, br):
     """Returns GID 11-20 based on block position."""
@@ -81,6 +83,8 @@ def tile_gids(col, row):
         return GID_PARK, 0
     elif (bc, br) == CASINO_BLOCK:
         return GID_SIDEWALK, GID_CASINO
+    elif (bc, br) == PIZZERIA_BLOCK:
+        return GID_SIDEWALK, GID_PIZZERIA
     else:
         return GID_SIDEWALK, building_gid(bc, br)
 
@@ -111,7 +115,7 @@ tiled_map = {
     "version": "1.10",
     "tiledversion": "1.10.0",
     "nextlayerid": 4,
-    "nextobjectid": 3,
+    "nextobjectid": 4,
     "layers": [
         {
             "id": 1,
@@ -157,11 +161,23 @@ tiled_map = {
                 {
                     # South-face entrance of the casino block (3,2).
                     # Interior cols 34-38, south sidewalk row 29.
-                    # A 3-tile-wide door centred on col 36.
                     "id": 2,
                     "name": "casino_entrance",
                     "type": "casino_entrance",
                     "x": 35 * TS,
+                    "y": 29 * TS,
+                    "width":  3 * TS,
+                    "height": TS,
+                    "rotation": 0,
+                    "visible": True,
+                },
+                {
+                    # South-face entrance of the pizzeria block (1,2).
+                    # Interior cols 14-18, south sidewalk row 29.
+                    "id": 3,
+                    "name": "pizzeria_entrance",
+                    "type": "pizzeria_entrance",
+                    "x": 15 * TS,
                     "y": 29 * TS,
                     "width":  3 * TS,
                     "height": TS,

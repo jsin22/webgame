@@ -43,20 +43,11 @@
       <div id="controls-hint">WASD / Arrows — move &nbsp;|&nbsp; E — interact</div>
     </div>
 
-    <!-- Login overlay — shown until the player authenticates -->
-    <div id="login-overlay">
-      <div id="login-box">
-        <div id="login-title">⚔ CITY RPG</div>
-        <div id="login-subtitle">Enter a username to play</div>
-        <input id="username-input" type="text" placeholder="Username" maxlength="20" autocomplete="off" spellcheck="false">
-        <button id="login-btn">Enter City</button>
-        <div id="login-status"></div>
-      </div>
-    </div>
-
     <!-- Global state and persistence (loaded before scenes) -->
     <script src="js/GameState.js"></script>
     <script src="js/SaveManager.js"></script>
+    <script src="js/PlayerAuth.js"></script>
+    <script src="js/CharacterCreator.js"></script>
 
     <!-- Phaser scenes -->
     <script src="js/scenes/BootScene.js"></script>
@@ -68,54 +59,40 @@
     <script src="js/main.js"></script>
 
     <script>
-      // ── Login flow ──────────────────────────────────────────────────────────
-      const loginOverlay = document.getElementById('login-overlay');
-      const loginBtn     = document.getElementById('login-btn');
-      const usernameInput = document.getElementById('username-input');
-      const loginStatus  = document.getElementById('login-status');
+      // ── Character creator + multiplayer login ───────────────────────────────
+      window.addEventListener('load', () => {
+        CharacterCreator.show(playerData => {
+          // Store character data globally so GameScene can apply appearance
+          window.characterData = playerData;
 
-      function attemptLogin() {
-        const username = usernameInput.value.trim();
-        if (!username) {
-          loginStatus.textContent = 'Please enter a username.';
-          return;
-        }
+          // Connect to the multiplayer server
+          const socket = io({ transports: ['polling'] });
+          window.socket = socket;
 
-        loginBtn.disabled   = true;
-        loginStatus.textContent = 'Connecting…';
+          socket.on('connect', () => {
+            socket.emit('login', { username: playerData.username });
+          });
 
-        const socket = io({ transports: ['polling'] });
-        window.socket = socket;
+          socket.on('login_success', data => {
+            if (window._phaserGame) {
+              window._phaserGame.events.emit('multiplayerLogin', data);
+            }
+          });
 
-        socket.on('connect', () => {
-          loginStatus.textContent = 'Connected — logging in…';
-          socket.emit('login', { username });
+          socket.on('connect_error', () => {
+            // No server — fall back to single-player with default spawn
+            socket.disconnect();
+            window.socket = null;
+            if (window._phaserGame) {
+              window._phaserGame.events.emit('multiplayerLogin', {
+                username: playerData.username,
+                player: { x: 480, y: 512, money: 100 },
+                others: {},
+              });
+            }
+          });
         });
-
-        socket.on('login_success', data => {
-          loginOverlay.style.display = 'none';
-          // Pass login data to the Phaser game (GameScene listens for this)
-          if (window._phaserGame) {
-            window._phaserGame.events.emit('multiplayerLogin', data);
-          }
-        });
-
-        socket.on('connect_error', () => {
-          loginStatus.textContent = 'Could not reach server. Is app.py running?';
-          loginBtn.disabled = false;
-          socket.disconnect();
-          window.socket = null;
-        });
-      }
-
-      loginBtn.addEventListener('click', attemptLogin);
-      usernameInput.addEventListener('keydown', e => {
-        e.stopPropagation();  // prevent Phaser from calling preventDefault() on WASD/E
-        if (e.key === 'Enter') attemptLogin();
       });
-
-      // Auto-focus the input once the page loads
-      window.addEventListener('load', () => usernameInput.focus());
     </script>
   </div>
 </body>

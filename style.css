@@ -1,7 +1,7 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
-/* ─── Login overlay ─────────────────────────────────────────────────────────── */
-#login-overlay {
+/* ─── Character Creator overlay ──────────────────────────────────────────────── */
+#creator-overlay {
   position: absolute;
   inset: 0;
   background: rgba(5, 5, 20, 0.93);
@@ -12,33 +12,46 @@
   backdrop-filter: blur(6px);
 }
 
-#login-box {
+#creator-box {
   background: rgba(10, 10, 30, 0.95);
   border: 1px solid #3a3a6a;
   border-radius: 8px;
-  padding: 36px 40px;
+  padding: 24px 28px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
-  width: 300px;
+  gap: 10px;
+  width: 340px;
+  max-height: 90vh;
+  overflow-y: auto;
   box-shadow: 0 0 40px rgba(80, 80, 200, 0.2);
 }
 
-#login-title {
+#creator-title {
   font-size: 26px;
   color: #e8d090;
   letter-spacing: 2px;
   font-weight: bold;
+  text-align: center;
 }
 
-#login-subtitle {
+.creator-subtitle {
   font-size: 12px;
   color: #666;
   letter-spacing: 0.5px;
+  margin-bottom: 4px;
+  text-align: center;
 }
 
-#username-input {
+#cc-view-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  align-items: center;
+}
+
+.cc-input {
   width: 100%;
   background: #0d0d20;
   border: 1px solid #3a3a6a;
@@ -46,15 +59,15 @@
   padding: 9px 12px;
   color: #e8d090;
   font-family: 'Courier New', monospace;
-  font-size: 15px;
+  font-size: 14px;
   outline: none;
   text-align: center;
   letter-spacing: 1px;
+  box-sizing: border-box;
 }
+.cc-input:focus { border-color: #6a6aaa; }
 
-#username-input:focus { border-color: #6a6aaa; }
-
-#login-btn {
+.cc-btn {
   width: 100%;
   padding: 10px;
   background: #1a1a5a;
@@ -62,20 +75,105 @@
   border-radius: 4px;
   color: #e8d090;
   font-family: 'Courier New', monospace;
-  font-size: 14px;
+  font-size: 13px;
   cursor: pointer;
   letter-spacing: 1px;
   transition: background 0.15s;
 }
+.cc-btn:hover:not(:disabled) { background: #2a2a7a; }
+.cc-btn:disabled { opacity: 0.5; cursor: default; }
 
-#login-btn:hover:not(:disabled) { background: #2a2a7a; }
-#login-btn:disabled { opacity: 0.5; cursor: default; }
+.cc-btn-secondary {
+  width: 100%;
+  padding: 6px;
+  background: transparent;
+  border: 1px solid #2a2a4a;
+  border-radius: 4px;
+  color: #666;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.cc-btn-secondary:hover { color: #aaa; border-color: #4a4a6a; }
 
-#login-status {
+.cc-status {
   font-size: 11px;
   color: #7777aa;
   min-height: 16px;
   text-align: center;
+}
+.cc-status.error { color: #e05050; }
+.cc-status.ok    { color: #50e070; }
+
+/* Gender toggle */
+#cc-gender-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.gender-btn {
+  flex: 1;
+  padding: 8px;
+  background: #0d0d20;
+  border: 1px solid #3a3a6a;
+  border-radius: 4px;
+  color: #666;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  letter-spacing: 0.5px;
+}
+.gender-btn.active {
+  background: #1a2a5a;
+  border-color: #6a8aff;
+  color: #e8d090;
+}
+
+/* Color pickers */
+#cc-colors {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cc-color-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cc-color-label {
+  font-size: 10px;
+  color: #888;
+  width: 36px;
+  flex-shrink: 0;
+}
+.cc-swatches {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.cc-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: border-color 0.1s, transform 0.1s;
+}
+.cc-swatch:hover    { transform: scale(1.15); }
+.cc-swatch.selected { border-color: #ffffff; }
+
+/* Preview canvas */
+#cc-preview {
+  border: 1px solid #3a3a6a;
+  border-radius: 4px;
+  background: #0d0d20;
+  image-rendering: pixelated;
+  width: 80px;
+  height: 120px;
 }
 
 body {

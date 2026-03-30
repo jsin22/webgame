@@ -53,6 +53,16 @@ class GameScene extends Phaser.Scene {
     this.player.body.setSize(20, 24);
     this.player.body.setOffset(6, 22);
 
+    // ── Visual player layers (body + clothing) ──────────────────────────────
+    // Physics sprite drives movement/animation logic; these visual sprites
+    // mirror its frame each update so clothing can be tinted independently.
+    this.player.setAlpha(0);   // invisible — visual layers take over
+
+    this.playerBody  = this.add.sprite(spawnX, spawnY, 'player_body_male', 0).setDepth(2);
+    this.playerShirt = this.add.sprite(spawnX, spawnY, 'player_shirt',     0).setDepth(2).setTint(0x2855d4);
+    this.playerPants = this.add.sprite(spawnX, spawnY, 'player_pants',     0).setDepth(2).setTint(0x1a1a1a);
+    this.playerShoes = this.add.sprite(spawnX, spawnY, 'player_shoes',     0).setDepth(2).setTint(0x6a3010);
+
     // ── Animations ───────────────────────────────────────────────────────────
     const anims = this.anims;
 
@@ -245,6 +255,14 @@ class GameScene extends Phaser.Scene {
       this.player.anims.play(`idle-${this.facing}`, true);
     }
 
+    // ── Sync visual layers with physics sprite ────────────────────────────────
+    const fi = this.player.frame.name;
+    const px = this.player.x, py = this.player.y;
+    this.playerBody.setFrame(fi).setPosition(px, py);
+    this.playerShirt.setFrame(fi).setPosition(px, py);
+    this.playerPants.setFrame(fi).setPosition(px, py);
+    this.playerShoes.setFrame(fi).setPosition(px, py);
+
     // ── Name tag follows player ───────────────────────────────────────────────
     this.nameTag.setPosition(this.player.x, this.player.y - 28);
 
@@ -327,6 +345,9 @@ class GameScene extends Phaser.Scene {
       if (this.moneyEl) this.moneyEl.textContent = `$${GameState.money}`;
     }
 
+    // Apply character appearance (gender + clothing colors)
+    if (window.characterData) this._applyCharacterLayers(window.characterData);
+
     // Render players already online
     Object.entries(others || {}).forEach(([uname, pdata]) => {
       this._addOtherPlayer(uname, pdata);
@@ -390,6 +411,18 @@ class GameScene extends Phaser.Scene {
   }
 
   // ── Private helpers ─────────────────────────────────────────────────────────
+
+  _applyCharacterLayers(cd) {
+    const bodyKey = cd.gender === 'female' ? 'player_body_female' : 'player_body_male';
+    this.playerBody.setTexture(bodyKey);
+    if (cd.colors) {
+      const t = hex => parseInt(hex.replace('#', ''), 16);
+      this.playerShirt.setTint(t(cd.colors.shirt));
+      this.playerPants.setTint(t(cd.colors.pants));
+      this.playerShoes.setTint(t(cd.colors.shoes));
+    }
+  }
+
   _enterPizzeria() {
     this.pizzeriaActive = true;
     this.pizzeriaPrompt.setVisible(false);

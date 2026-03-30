@@ -203,6 +203,7 @@ canvas { display: block; }
   pointer-events: none;
   user-select: none;
   z-index: 10;
+  line-height: normal; /* reset from #game-container's line-height: 0 */
 }
 
 #character-panel {

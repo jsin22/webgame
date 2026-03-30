@@ -121,8 +121,8 @@ def _draw_body(buf, bw, ox, oy, direction, frame, skin, hair, female=False):
         rect(buf, bw, cx-5,  cy-7, 6,  6, skin)
         # Head
         circle(buf, bw, cx-2, cy-13, 9, skin)
-        # Hair
-        rect(buf, bw, cx-11, cy-22, 16, 9, hair)
+        # Hair (width 19 to cover full head extent cx-11..cx+7)
+        rect(buf, bw, cx-11, cy-22, 19, 9, hair)
         circle(buf, bw, cx-2, cy-19, 8, hair)
         if female:
             rect(buf, bw, cx-11, cy-19, 3, 12, hair)   # side curtain
@@ -143,8 +143,8 @@ def _draw_body(buf, bw, ox, oy, direction, frame, skin, hair, female=False):
         rect(buf, bw, cx-1,  cy-7, 6,  6, skin)
         # Head
         circle(buf, bw, cx+2, cy-13, 9, skin)
-        # Hair
-        rect(buf, bw, cx-5, cy-22, 16, 9, hair)
+        # Hair (start at cx-7 to cover full head extent cx-7..cx+11)
+        rect(buf, bw, cx-7, cy-22, 19, 9, hair)
         circle(buf, bw, cx+2, cy-19, 8, hair)
         if female:
             rect(buf, bw, cx+7, cy-19, 3, 12, hair)    # side curtain

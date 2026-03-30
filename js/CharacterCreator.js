@@ -289,25 +289,24 @@ const CharacterCreator = {
     ctx.fillStyle = skin;
     ctx.fill();
 
-    // Hair cap (top half)
+    // Hair cap (top half only — stops at hairline, does not cover face)
     ctx.fillStyle = hair;
     ctx.beginPath();
     ctx.arc(cx, H - 96, 16, Math.PI, 0);
     ctx.fill();
-    ctx.fillRect(cx - 16, H - 96, 32, 8);
 
     if (female) {
-      // Longer side hair
-      ctx.fillRect(cx - 20, H - 92, 7, 22);
-      ctx.fillRect(cx + 13, H - 92, 7, 22);
+      // Shoulder-length side curtains (beside face, below hairline)
+      ctx.fillRect(cx - 20, H - 94, 6, 18);
+      ctx.fillRect(cx + 14, H - 94, 6, 18);
     }
 
-    // Eyes
+    // Eyes — positioned in the face area, below the hairline
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(cx - 9, H - 98, 5, 5);
-    ctx.fillRect(cx + 4, H - 98, 5, 5);
+    ctx.fillRect(cx - 9, H - 92, 5, 5);
+    ctx.fillRect(cx + 4, H - 92, 5, 5);
     ctx.fillStyle = '#1e1e3c';
-    ctx.fillRect(cx - 8, H - 97, 3, 3);
-    ctx.fillRect(cx + 5, H - 97, 3, 3);
+    ctx.fillRect(cx - 8, H - 91, 3, 3);
+    ctx.fillRect(cx + 5, H - 91, 3, 3);
   },
 };

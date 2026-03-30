@@ -8,10 +8,7 @@ CITY-RPG: STATUS & BUG TRACKER
 
 [ CURRENT BUGS: HIGH PRIORITY ]
 --------------------------------------------------------------------------------
-ID: BUG-002
-ISSUE: 
-STEPS:
-STATUS: OPEN
+(none)
 
 [ CURRENT BUGS: LOW PRIORITY / POLISH ]
 --------------------------------------------------------------------------------
@@ -20,6 +17,15 @@ STATUS: OPEN
 
 [ COMPLETED / FIXED ]
 --------------------------------------------------------------------------------
+BUG-004: Two blackjack issues, same root cause: _makeBtn returned only the bg
+         rectangle, leaving the text label as an orphan object never stored or
+         hidden. So setVisible(false) hid the bg but left the text visible, causing
+         "PLAY AGAIN" to overlay the DEAL button at scene start (jumbled look)
+         and to remain after _reset() (making it seem like clicking did nothing).
+         Fix: store txt reference in _makeBtn and return a proxy object with
+         setVisible(v) that syncs both bg and txt. All existing callers work
+         unchanged since they only call setVisible() on the returned handle.
+
 BUG-003: Removed spiky male hair (deleted the alternating-pixel spike loops in
          all 4 directions). Moved eyes, nose, and mouth 2px higher (cy-16/cy-12/
          cy-9 instead of cy-14/cy-10/cy-7) in both sprites and CharacterCreator

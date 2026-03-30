@@ -317,20 +317,26 @@ class BlackjackScene extends Phaser.Scene {
   }
 
   // ── Button helper ─────────────────────────────────────────────────────────
+  // Returns a proxy { setVisible(v) } that syncs both the rectangle and text.
+  // Previously only the rectangle was returned, leaving the text label as an
+  // orphan that was never hidden — causing "PLAY AGAIN" to show over DEAL at
+  // scene start and to persist after _reset().
   _makeBtn(x, y, label, bgColor, hoverColor, callback) {
-    const W = Math.max(label.length * 13 + 24, 80);
-    const bg = this.add.rectangle(x, y, W, 36, bgColor)
+    const bW = Math.max(label.length * 13 + 24, 80);
+    const bg = this.add.rectangle(x, y, bW, 36, bgColor)
       .setStrokeStyle(2, 0xffd700)
       .setInteractive({ useHandCursor: true });
-    this.add.text(x, y, label, {
+    const txt = this.add.text(x, y, label, {
       fontFamily: 'Courier New', fontSize: '13px', color: '#ffffff',
       stroke: '#000', strokeThickness: 2,
-      fixedWidth: W - 8, align: 'center',
+      fixedWidth: bW - 8, align: 'center',
     }).setOrigin(0.5);
     bg.on('pointerover',  () => bg.setFillStyle(hoverColor));
     bg.on('pointerout',   () => bg.setFillStyle(bgColor));
     bg.on('pointerdown',  () => bg.setAlpha(0.7));
     bg.on('pointerup',    () => { bg.setAlpha(1); callback(); });
-    return bg;
+    return {
+      setVisible(v) { bg.setVisible(v); txt.setVisible(v); return this; },
+    };
   }
 }

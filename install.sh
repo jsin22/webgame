@@ -23,6 +23,14 @@ install_python_deps_apt() {
     || python3 -m pip install simple-websocket
 }
 
+install_python_deps_dnf() {
+  echo ">> Installing Python packages via dnf..."
+  sudo dnf install -y python3-flask python3-pip
+  # flask-socketio and simple-websocket are not in Fedora repos, install via pip
+  python3 -m pip install flask-socketio simple-websocket --break-system-packages 2>/dev/null \
+    || python3 -m pip install flask-socketio simple-websocket
+}
+
 install_python_deps_brew() {
   echo ">> Installing Python packages via pip3 (Homebrew Python)..."
   pip3 install flask flask-socketio simple-websocket
@@ -44,6 +52,8 @@ else
     install_python_deps_brew
   elif command -v apt-get &>/dev/null; then
     install_python_deps_apt
+  elif command -v dnf &>/dev/null; then
+    install_python_deps_dnf
   elif command -v pip3 &>/dev/null; then
     install_python_deps_pip
   else

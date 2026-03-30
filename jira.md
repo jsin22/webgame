@@ -19,6 +19,11 @@ STATUS: OPEN
 
 [ COMPLETED / FIXED ]
 --------------------------------------------------------------------------------
+FEAT-04: Added mouth (pinkish 4px rect on front view, 1px on profiles) to all
+         face-visible directions. Shrunk ear rects from 2×4 to 2×3. Added spiky
+         male hair: 4 alternating dark pixels 1 row above the hair rect in all
+         directions (skipped for female). Also updated CharacterCreator preview.
+
 FEAT-03: Added ears (2×4 skin rect outside head circle), nose (2-px dark dot
          below eyes), and pupils to all sprite directions in _draw_body. Shifted
          hair rects/circles 1px higher (cy-23 / cy-20). Also added ears and nose

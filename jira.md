@@ -17,6 +17,15 @@ CITY-RPG: STATUS & BUG TRACKER
 
 [ COMPLETED / FIXED ]
 --------------------------------------------------------------------------------
+FEAT-05: Added pizza ordering to the pizzeria. PizzeriaScene now opens a lobby
+         screen with two choices — "ORDER FOOD" or "WORK A SHIFT". The food menu
+         offers Slice ($8, +20 HP), Half Pizza ($15, +45 HP +15 Energy), and Full
+         Pizza ($25, +80 HP +35 Energy). HP/Energy are capped at max, state is
+         auto-saved after each purchase. The work flow is unchanged (supply →
+         price → shift). Also fixed GameState.hp never reflecting in the HUD by
+         migrating _refreshHUD to read GameState.hp/maxHp and adding addHp() /
+         addEnergy() helpers that emit hpChanged / energyChanged events.
+
 BUG-004: Two blackjack issues, same root cause: _makeBtn returned only the bg
          rectangle, leaving the text label as an orphan object never stored or
          hidden. So setVisible(false) hid the bg but left the text visible, causing

@@ -204,6 +204,16 @@ class GameScene extends Phaser.Scene {
       SaveManager.save();
     }, this);
 
+    this.game.events.on('hpChanged', () => {
+      if (this.hpBar) this.hpBar.style.width = (GameState.hp / GameState.maxHp * 100) + '%';
+      if (this.hpVal) this.hpVal.textContent = `${GameState.hp}/${GameState.maxHp}`;
+    }, this);
+
+    this.game.events.on('energyChanged', () => {
+      if (this.energyBar) this.energyBar.style.width = (GameState.energy / GameState.maxEnergy * 100) + '%';
+      if (this.energyVal) this.energyVal.textContent = `${GameState.energy}/${GameState.maxEnergy}`;
+    }, this);
+
     this.game.events.on('timeChanged', () => this._refreshTime(), this);
 
     // ── Multiplayer: wait for login_success ───────────────────────────────────
@@ -437,9 +447,9 @@ class GameScene extends Phaser.Scene {
   }
 
   _refreshHUD() {
-    const { hp, maxHp, name } = this.playerData;
-    if (this.hpBar)      this.hpBar.style.width      = (hp / maxHp * 100) + '%';
-    if (this.hpVal)      this.hpVal.textContent       = `${hp}/${maxHp}`;
+    const name = this.playerData ? this.playerData.name : 'Hero';
+    if (this.hpBar)      this.hpBar.style.width      = (GameState.hp / GameState.maxHp * 100) + '%';
+    if (this.hpVal)      this.hpVal.textContent       = `${GameState.hp}/${GameState.maxHp}`;
     if (this.charNameEl) this.charNameEl.textContent  = name;
     if (this.moneyEl)    this.moneyEl.textContent     = `$${GameState.money}`;
 

@@ -56,6 +56,22 @@ const GameState = {
     }
   },
 
+  /** Restore (positive) or reduce HP; clamped to [0, maxHp]. */
+  addHp(amount) {
+    this.hp = Math.min(this.maxHp, Math.max(0, this.hp + amount));
+    if (window._phaserGame) {
+      window._phaserGame.events.emit('hpChanged', this.hp);
+    }
+  },
+
+  /** Restore (positive) or reduce energy; clamped to [0, maxEnergy]. */
+  addEnergy(amount) {
+    this.energy = Math.min(this.maxEnergy, Math.max(0, this.energy + amount));
+    if (window._phaserGame) {
+      window._phaserGame.events.emit('energyChanged', this.energy);
+    }
+  },
+
   /**
    * Advance in-game clock by a number of whole hours.
    * Also updates job rank based on total shifts worked.

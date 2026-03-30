@@ -208,18 +208,22 @@ def draw_shoes(buf, bw, ox, oy, direction, frame):
     lo  = [0, 3, 0, -3][frame]
     cx  = ox + FW // 2
     cy  = oy + FH // 2
+    # Shoes base at cy+18 (one pixel below pants bottom at cy+17).
+    # Animation only shifts shoes DOWNWARD so they never enter the pants region.
+    d1 = max(0,  lo)
+    d2 = max(0, -lo)
     if direction == 0:
-        rect(buf, bw, cx-8, cy+16+lo,  7, 5, W)
-        rect(buf, bw, cx+1, cy+16-lo,  7, 5, W)
+        rect(buf, bw, cx-8, cy+18+d1, 7, 5, W)
+        rect(buf, bw, cx+1, cy+18+d2, 7, 5, W)
     elif direction == 1:
-        rect(buf, bw, cx-9, cy+16+lo,  7, 5, W)   # front shoe
-        rect(buf, bw, cx-2, cy+16-lo,  7, 5, W)   # back shoe
+        rect(buf, bw, cx-9, cy+18+d1, 7, 5, W)
+        rect(buf, bw, cx-2, cy+18+d2, 7, 5, W)
     elif direction == 2:
-        rect(buf, bw, cx+2, cy+16+lo,  7, 5, W)   # front shoe
-        rect(buf, bw, cx-5, cy+16-lo,  7, 5, W)   # back shoe
+        rect(buf, bw, cx+2, cy+18+d1, 7, 5, W)
+        rect(buf, bw, cx-5, cy+18+d2, 7, 5, W)
     elif direction == 3:
-        rect(buf, bw, cx-8, cy+16+lo,  7, 5, W)
-        rect(buf, bw, cx+1, cy+16-lo,  7, 5, W)
+        rect(buf, bw, cx-8, cy+18+d1, 7, 5, W)
+        rect(buf, bw, cx+1, cy+18+d2, 7, 5, W)
 
 # ── Build sprite sheets ───────────────────────────────────────────────────────
 

@@ -9,4 +9,11 @@ serve:
 tunnel:
 	ngrok http $(PORT)
 
-.PHONY: install serve tunnel
+start:
+	@echo "Starting server on port $(PORT) and opening ngrok tunnel..."
+	@python3 app.py --port $(PORT) & echo $$! > .server.pid
+	@sleep 1
+	@ngrok http $(PORT)
+	@kill $$(cat .server.pid) 2>/dev/null; rm -f .server.pid
+
+.PHONY: install serve tunnel start

@@ -17,3 +17,4 @@ Thumbs.db
 
 # Runtime server data
 player_data.json
+.server.pid

@@ -100,26 +100,22 @@ def _draw_body(buf, bw, ox, oy, direction, frame, skin, hair, female=False):
         # Ears (small — 2×3)
         rect(buf, bw, cx-12, cy-16, 2, 3, skin)
         rect(buf, bw, cx+10, cy-16, 2, 3, skin)
-        # Hair — male: short spikey cap   female: longer with side curtains
+        # Hair — male: smooth cap   female: longer with side curtains
         rect(buf, bw, cx-9, cy-23, 18, 9, hair)
         circle(buf, bw, cx, cy-20, 8, hair)
         if female:
             rect(buf, bw, cx-11, cy-21, 4, 14, hair)   # left side curtain
             rect(buf, bw, cx+7,  cy-21, 4, 14, hair)   # right side curtain
-        else:
-            # Spiky tips — alternating pixels 1 row above hair rect
-            for sx in [cx-7, cx-3, cx+1, cx+5]:
-                px(buf, bw, sx, cy-24, hair)
-        # Eyes + pupils
-        rect(buf, bw, cx-5, cy-14, 3, 3, EYE)
-        rect(buf, bw, cx+2, cy-14, 3, 3, EYE)
-        px(buf, bw, cx-4, cy-13, PUPIL)
-        px(buf, bw, cx+3, cy-13, PUPIL)
-        # Nose
-        px(buf, bw, cx-1, cy-10, PUPIL)
-        px(buf, bw, cx,   cy-10, PUPIL)
-        # Mouth
-        rect(buf, bw, cx-2, cy-7, 4, 1, MOUTH)
+        # Eyes + pupils (moved 2px higher)
+        rect(buf, bw, cx-5, cy-16, 3, 3, EYE)
+        rect(buf, bw, cx+2, cy-16, 3, 3, EYE)
+        px(buf, bw, cx-4, cy-15, PUPIL)
+        px(buf, bw, cx+3, cy-15, PUPIL)
+        # Nose (moved 2px higher)
+        px(buf, bw, cx-1, cy-12, PUPIL)
+        px(buf, bw, cx,   cy-12, PUPIL)
+        # Mouth (moved 2px higher)
+        rect(buf, bw, cx-2, cy-9, 4, 1, MOUTH)
 
     elif direction == 1:  # ── LEFT ──────────────────────────────────────────
         # Back leg
@@ -141,16 +137,13 @@ def _draw_body(buf, bw, ox, oy, direction, frame, skin, hair, female=False):
         circle(buf, bw, cx-2, cy-20, 8, hair)
         if female:
             rect(buf, bw, cx-11, cy-20, 3, 12, hair)   # side curtain
-        else:
-            for sx in [cx-9, cx-5, cx-1, cx+3]:
-                px(buf, bw, sx, cy-24, hair)
-        # Eye
-        rect(buf, bw, cx-7, cy-14, 3, 3, EYE)
-        px(buf, bw, cx-6, cy-13, PUPIL)
-        # Nose (profile — sticks out left)
-        px(buf, bw, cx-11, cy-11, PUPIL)
-        # Mouth
-        px(buf, bw, cx-10, cy-8, MOUTH)
+        # Eye (moved 2px higher)
+        rect(buf, bw, cx-7, cy-16, 3, 3, EYE)
+        px(buf, bw, cx-6, cy-15, PUPIL)
+        # Nose (profile — sticks out left, moved 2px higher)
+        px(buf, bw, cx-11, cy-13, PUPIL)
+        # Mouth (moved 2px higher)
+        px(buf, bw, cx-10, cy-10, MOUTH)
 
     elif direction == 2:  # ── RIGHT ─────────────────────────────────────────
         # Back leg
@@ -172,16 +165,13 @@ def _draw_body(buf, bw, ox, oy, direction, frame, skin, hair, female=False):
         circle(buf, bw, cx+2, cy-20, 8, hair)
         if female:
             rect(buf, bw, cx+7, cy-20, 3, 12, hair)    # side curtain
-        else:
-            for sx in [cx-5, cx-1, cx+3, cx+7]:
-                px(buf, bw, sx, cy-24, hair)
-        # Eye
-        rect(buf, bw, cx+4, cy-14, 3, 3, EYE)
-        px(buf, bw, cx+5, cy-13, PUPIL)
-        # Nose (profile — sticks out right)
-        px(buf, bw, cx+11, cy-11, PUPIL)
-        # Mouth
-        px(buf, bw, cx+10, cy-8, MOUTH)
+        # Eye (moved 2px higher)
+        rect(buf, bw, cx+4, cy-16, 3, 3, EYE)
+        px(buf, bw, cx+5, cy-15, PUPIL)
+        # Nose (profile — sticks out right, moved 2px higher)
+        px(buf, bw, cx+11, cy-13, PUPIL)
+        # Mouth (moved 2px higher)
+        px(buf, bw, cx+10, cy-10, MOUTH)
 
     elif direction == 3:  # ── UP ────────────────────────────────────────────
         # Legs + shirt (all skin — covered by layers)

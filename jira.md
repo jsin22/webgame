@@ -9,7 +9,7 @@ CITY-RPG: STATUS & BUG TRACKER
 [ CURRENT BUGS: HIGH PRIORITY ]
 --------------------------------------------------------------------------------
 ID: BUG-002
-ISSUE:
+ISSUE: 
 STEPS:
 STATUS: OPEN
 
@@ -17,8 +17,19 @@ STATUS: OPEN
 --------------------------------------------------------------------------------
 (none)
 
+
 [ COMPLETED / FIXED ]
 --------------------------------------------------------------------------------
+BUG-003: Removed spiky male hair (deleted the alternating-pixel spike loops in
+         all 4 directions). Moved eyes, nose, and mouth 2px higher (cy-16/cy-12/
+         cy-9 instead of cy-14/cy-10/cy-7) in both sprites and CharacterCreator
+         preview. Creator preview and in-game sprites now match.
+
+BUG-002: "PLAY AGAIN" button text was jumbled — _makeBtn used label.length*10+20
+         for button width, which was too narrow for 13px Courier New with stroke.
+         Fixed by using label.length*13+24 and adding fixedWidth+align:'center'
+         to the text style to prevent overflow/wrapping.
+
 FEAT-04: Added mouth (pinkish 4px rect on front view, 1px on profiles) to all
          face-visible directions. Shrunk ear rects from 2×4 to 2×3. Added spiky
          male hair: 4 alternating dark pixels 1 row above the hair rect in all

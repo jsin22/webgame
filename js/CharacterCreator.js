@@ -304,28 +304,22 @@ const CharacterCreator = {
       // Shoulder-length side curtains (beside face, below hairline)
       ctx.fillRect(cx - 20, H - 94, 6, 18);
       ctx.fillRect(cx + 14, H - 94, 6, 18);
-    } else {
-      // Spiky tips for male — dots above the hair cap
-      ctx.fillStyle = hair;
-      for (const sx of [cx - 10, cx - 4, cx + 2, cx + 8]) {
-        ctx.fillRect(sx, H - 115, 2, 3);
-      }
     }
 
-    // Eyes — positioned in the face area, below the hairline
+    // Eyes — moved 2px higher than before
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(cx - 9, H - 92, 5, 5);
-    ctx.fillRect(cx + 4, H - 92, 5, 5);
+    ctx.fillRect(cx - 9, H - 96, 5, 5);
+    ctx.fillRect(cx + 4, H - 96, 5, 5);
     ctx.fillStyle = '#1e1e3c';
-    ctx.fillRect(cx - 8, H - 91, 3, 3);
-    ctx.fillRect(cx + 5, H - 91, 3, 3);
+    ctx.fillRect(cx - 8, H - 95, 3, 3);
+    ctx.fillRect(cx + 5, H - 95, 3, 3);
 
-    // Nose — centered below eyes
+    // Nose — centered below eyes (moved up 2px)
     ctx.fillStyle = '#1e1e3c';
-    ctx.fillRect(cx - 1, H - 85, 3, 2);
+    ctx.fillRect(cx - 1, H - 89, 3, 2);
 
-    // Mouth
+    // Mouth (moved up 2px)
     ctx.fillStyle = '#be5a50';
-    ctx.fillRect(cx - 4, H - 80, 8, 2);
+    ctx.fillRect(cx - 4, H - 84, 8, 2);
   },
 };

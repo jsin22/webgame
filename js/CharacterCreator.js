@@ -289,6 +289,11 @@ const CharacterCreator = {
     ctx.fillStyle = skin;
     ctx.fill();
 
+    // Ears
+    ctx.fillStyle = skin;
+    ctx.fillRect(cx - 20, H - 100, 4, 8);
+    ctx.fillRect(cx + 16, H - 100, 4, 8);
+
     // Hair cap (top half only — stops at hairline, does not cover face)
     ctx.fillStyle = hair;
     ctx.beginPath();
@@ -308,5 +313,9 @@ const CharacterCreator = {
     ctx.fillStyle = '#1e1e3c';
     ctx.fillRect(cx - 8, H - 91, 3, 3);
     ctx.fillRect(cx + 5, H - 91, 3, 3);
+
+    // Nose — centered below eyes
+    ctx.fillStyle = '#1e1e3c';
+    ctx.fillRect(cx - 1, H - 85, 3, 2);
   },
 };

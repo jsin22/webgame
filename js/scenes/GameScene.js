@@ -103,10 +103,6 @@ class GameScene extends Phaser.Scene {
       down:  Phaser.Input.Keyboard.KeyCodes.DOWN,
       left:  Phaser.Input.Keyboard.KeyCodes.LEFT,
       right: Phaser.Input.Keyboard.KeyCodes.RIGHT,
-      w:     Phaser.Input.Keyboard.KeyCodes.W,
-      s:     Phaser.Input.Keyboard.KeyCodes.S,
-      a:     Phaser.Input.Keyboard.KeyCodes.A,
-      d:     Phaser.Input.Keyboard.KeyCodes.D,
     });
 
     // Prevent arrow keys / space from scrolling the browser page,
@@ -301,14 +297,10 @@ class GameScene extends Phaser.Scene {
     const SPEED = GameState.energy <= 10 ? 80 : 160;
     const k     = this.inputKeys;
 
-    // Don't read game keys while a DOM text input has focus.
-    const _ae = document.activeElement;
-    const inputFocused = _ae && (_ae.tagName === 'INPUT' || _ae.tagName === 'TEXTAREA');
-
-    const goLeft  = !inputFocused && (k.left.isDown  || k.a.isDown);
-    const goRight = !inputFocused && (k.right.isDown || k.d.isDown);
-    const goUp    = !inputFocused && (k.up.isDown    || k.w.isDown);
-    const goDown  = !inputFocused && (k.down.isDown  || k.s.isDown);
+    const goLeft  = k.left.isDown;
+    const goRight = k.right.isDown;
+    const goUp    = k.up.isDown;
+    const goDown  = k.down.isDown;
 
     let vx = 0, vy = 0;
     if (goLeft)  vx -= SPEED;

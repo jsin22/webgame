@@ -301,12 +301,9 @@ class GameScene extends Phaser.Scene {
     const SPEED = GameState.energy <= 10 ? 80 : 160;
     const k     = this.inputKeys;
 
-    // Don't read game keys while a DOM text input has focus,
-    // EXCEPT the chat input — player should still be able to move while chatting.
+    // Don't read game keys while a DOM text input has focus.
     const _ae = document.activeElement;
-    const inputFocused = _ae &&
-      (_ae.tagName === 'INPUT' || _ae.tagName === 'TEXTAREA') &&
-      _ae.id !== 'chat-input';
+    const inputFocused = _ae && (_ae.tagName === 'INPUT' || _ae.tagName === 'TEXTAREA');
 
     const goLeft  = !inputFocused && (k.left.isDown  || k.a.isDown);
     const goRight = !inputFocused && (k.right.isDown || k.d.isDown);

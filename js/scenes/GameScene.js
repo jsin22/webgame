@@ -512,10 +512,10 @@ class GameScene extends Phaser.Scene {
     const shoes = this.add.sprite(x, y, 'player_shoes', 0).setDepth(2.1).setTint(t(colors.shoes || '#6a3010'));
     const pants = this.add.sprite(x, y, 'player_pants', 0).setDepth(2.3).setTint(t(colors.pants || '#1a1a1a'));
 
-    // Clickable hit area on the body sprite for chat requests
+    // Clickable hit area — opens the player interaction menu
     body.setInteractive({ useHandCursor: true });
-    body.on('pointerup', () => {
-      if (!this._chatOpen) this._sendChatRequest(username);
+    body.on('pointerup', (pointer) => {
+      this._showPlayerMenu(username, pointer.x, pointer.y);
     });
 
     const displayName = data.username || username;
@@ -538,6 +538,63 @@ class GameScene extends Phaser.Scene {
   }
 
   // ── SOC-001 Chat helpers ──────────────────────────────────────────────────
+
+  _showPlayerMenu(username, screenX, screenY) {
+    this._hidePlayerMenu();
+
+    const menu = document.createElement('div');
+    menu.id = 'player-menu';
+    Object.assign(menu.style, {
+      position: 'fixed', left: `${screenX + 12}px`, top: `${screenY - 8}px`,
+      background: '#0d0d20', border: '1px solid #3a3a6a', borderRadius: '6px',
+      fontFamily: 'Courier New', fontSize: '13px', zIndex: 1030,
+      minWidth: '130px', overflow: 'hidden', boxShadow: '0 4px 12px #000a',
+    });
+
+    // Header — player name
+    const header = document.createElement('div');
+    header.textContent = username;
+    Object.assign(header.style, {
+      padding: '6px 12px', color: '#88ccff',
+      borderBottom: '1px solid #2a2a4a', fontSize: '11px',
+    });
+    menu.appendChild(header);
+
+    // Chat button
+    const chatDisabled = this._chatOpen || this._chatBusy.has(username);
+    const chatBtn = document.createElement('button');
+    chatBtn.textContent = '💬 Chat';
+    chatBtn.disabled = chatDisabled;
+    Object.assign(chatBtn.style, {
+      display: 'block', width: '100%', padding: '8px 12px',
+      background: 'none', border: 'none', textAlign: 'left',
+      fontFamily: 'Courier New', fontSize: '13px',
+      color: chatDisabled ? '#444' : '#ccc',
+      cursor: chatDisabled ? 'not-allowed' : 'pointer',
+    });
+    if (!chatDisabled) {
+      chatBtn.onmouseover = () => { chatBtn.style.background = '#1a1a3a'; };
+      chatBtn.onmouseout  = () => { chatBtn.style.background = 'none'; };
+      chatBtn.onclick = () => { this._hidePlayerMenu(); this._sendChatRequest(username); };
+    }
+    menu.appendChild(chatBtn);
+
+    document.body.appendChild(menu);
+
+    // Dismiss when clicking outside the menu
+    const onDown = (e) => {
+      if (!menu.contains(e.target)) {
+        this._hidePlayerMenu();
+        document.removeEventListener('mousedown', onDown);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+  }
+
+  _hidePlayerMenu() {
+    const el = document.getElementById('player-menu');
+    if (el) el.remove();
+  }
 
   _sendChatRequest(toUsername) {
     if (this._chatBusy.has(toUsername)) {
@@ -717,6 +774,7 @@ class GameScene extends Phaser.Scene {
     this.player.setVelocity(0, 0);
     GameState._restingAtHome = true;
     document.getElementById('hud').style.display = 'none';
+    this._hidePlayerMenu();
     this.scene.pause();
     this.scene.launch('HomeScene');
   }
@@ -753,6 +811,7 @@ class GameScene extends Phaser.Scene {
     this.pizzeriaPrompt.setVisible(false);
     this.player.setVelocity(0, 0);
     document.getElementById('hud').style.display = 'none';
+    this._hidePlayerMenu();
     this.scene.pause();
     this.scene.launch('PizzeriaScene');
   }
@@ -762,6 +821,7 @@ class GameScene extends Phaser.Scene {
     this.casinoPrompt.setVisible(false);
     this.player.setVelocity(0, 0);
     document.getElementById('hud').style.display = 'none';
+    this._hidePlayerMenu();
     this.scene.pause();
     this.scene.launch('CasinoLobbyScene');
   }

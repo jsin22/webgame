@@ -223,6 +223,50 @@ class GameScene extends Phaser.Scene {
 
     this.game.events.on('multiplayerLogin', data => this._initMultiplayer(data), this);
 
+    // ── Night overlay (FEAT-001) ──────────────────────────────────────────────
+    // Fullscreen dark rectangle placed between tiles (depth 1.5) and player (2).
+    this.nightOverlay = this.add.rectangle(
+      map.widthInPixels / 2, map.heightInPixels / 2,
+      map.widthInPixels, map.heightInPixels,
+      0x000033, 0
+    ).setDepth(1.5);
+    this._updateDayNight();
+
+    // ── Home entrance ─────────────────────────────────────────────────────────
+    const homeObj = map.findObject('objects', o => o.name === 'home_entrance');
+    if (homeObj) {
+      this.homeEntrancePos = {
+        x: homeObj.x + homeObj.width  / 2,
+        y: homeObj.y + homeObj.height / 2,
+      };
+    }
+    this.homeActive = false;
+
+    this.homePrompt = this.add.text(0, 0, 'Press E to enter Home', {
+      fontFamily: 'Courier New', fontSize: '12px', color: '#a0d0ff',
+      stroke: '#000000', strokeThickness: 3,
+      backgroundColor: '#00000066', padding: { x: 6, y: 3 },
+    }).setOrigin(0.5, 1).setDepth(5).setVisible(false);
+
+    this.game.events.on('homeExit', () => {
+      this.homeActive = false;
+      GameState._restingAtHome = false;
+      document.getElementById('hud').style.display = '';
+      if (this.player) this.player.y += 80;
+      this._refreshHUD();
+    }, this);
+
+    // ── World clock (BUG-001) ─────────────────────────────────────────────────
+    // Time is now server-authoritative. world_tick fires every real second.
+    if (window.socket) {
+      window.socket.on('world_tick', tick => {
+        if (!this.homeActive) GameState.applyWorldTick(tick);
+        this._updateDayNight();
+        // Check faint
+        if (GameState.energy <= 0) this._triggerFaint();
+      });
+    }
+
     // Player data (expandable later)
     this.playerData = { name: 'Hero', hp: 100, maxHp: 100 };
     this._refreshHUD();
@@ -230,10 +274,9 @@ class GameScene extends Phaser.Scene {
 
   // ── Update ─────────────────────────────────────────────────────────────────
   update(time, delta) {
-    // ── Clock tick ────────────────────────────────────────────────────────────
-    GameState.tickClock(delta);
-
-    const SPEED = 160;
+    // Time is now driven by server world_tick — no local tick needed.
+    // Speed is halved when energy is critically low (≤10).
+    const SPEED = GameState.energy <= 10 ? 80 : 160;
     const k     = this.inputKeys;
 
     const goLeft  = k.left.isDown  || k.a.isDown;
@@ -312,6 +355,21 @@ class GameScene extends Phaser.Scene {
       }
     }
 
+    // ── Home entrance proximity ───────────────────────────────────────────────
+    if (this.homeEntrancePos && !this.homeActive && !this.casinoActive && !this.pizzeriaActive) {
+      const dx   = this.player.x - this.homeEntrancePos.x;
+      const dy   = this.player.y - this.homeEntrancePos.y;
+      const near = Math.sqrt(dx * dx + dy * dy) < 80;
+
+      this.homePrompt
+        .setVisible(near)
+        .setPosition(this.player.x, this.player.y - 44);
+
+      if (near && Phaser.Input.Keyboard.JustDown(this.inputKeys.e)) {
+        this._enterHome();
+      }
+    }
+
     // ── Multiplayer: emit position + animate other players ────────────────────
     if (window.socket) {
       const now = Date.now();
@@ -351,6 +409,9 @@ class GameScene extends Phaser.Scene {
 
     SaveManager.loadFromServer(player);
     this._applyCharacterLayers(player);
+    // Sync world time from server (overrides any saved per-player time)
+    if (data.world_time) GameState.syncWorldTime(data.world_time);
+    this._updateDayNight();
     this._refreshHUD();
 
     // Render players already online
@@ -372,6 +433,20 @@ class GameScene extends Phaser.Scene {
     socket.on('player_left', ({ username: uname }) => {
       this._removeOtherPlayer(uname);
     });
+
+    // ── SOC-001: Proximity chat ───────────────────────────────────────────────
+    socket.on('chat_incoming', ({ from }) => {
+      this._showChatRequest(from);
+    });
+    socket.on('chat_started', ({ with: partner }) => {
+      this._openChat(partner);
+    });
+    socket.on('chat_message', ({ from, text }) => {
+      this._appendChatMessage(from, text);
+    });
+    socket.on('chat_closed', () => {
+      this._closeChat(true);
+    });
   }
 
   _addOtherPlayer(username, data) {
@@ -380,6 +455,11 @@ class GameScene extends Phaser.Scene {
     const sprite = this.add.sprite(data.x, data.y, 'player', 0);
     sprite.setDepth(2).setTint(0xaaddff);  // blue tint distinguishes remote players
     sprite.anims.play(`idle-${data.facing || 'down'}`, true);
+    // SOC-001: clicking another player opens a chat request
+    sprite.setInteractive({ useHandCursor: true });
+    sprite.on('pointerup', () => {
+      if (!this._chatOpen) this._sendChatRequest(username);
+    });
 
     const nameTag = this.add.text(data.x, data.y - 28, username, {
       fontFamily: 'Courier New', fontSize: '10px',
@@ -394,6 +474,115 @@ class GameScene extends Phaser.Scene {
       facing: data.facing || 'down',
       lastUpdate: Date.now(),
     });
+  }
+
+  // ── SOC-001 Chat helpers ──────────────────────────────────────────────────
+
+  _sendChatRequest(toUsername) {
+    window.socket.emit('chat_request', { to: toUsername });
+    const note = document.createElement('div');
+    note.id = 'chat-request-sent';
+    note.textContent = `Chat request sent to ${toUsername}…`;
+    Object.assign(note.style, {
+      position: 'fixed', top: '50%', left: '50%',
+      transform: 'translate(-50%,-50%)',
+      background: '#111a', color: '#ffd700',
+      fontFamily: 'Courier New', fontSize: '14px',
+      padding: '12px 20px', borderRadius: '6px',
+      border: '1px solid #ffd70088', zIndex: 1000,
+    });
+    document.body.appendChild(note);
+    setTimeout(() => note.remove(), 2500);
+  }
+
+  _showChatRequest(fromUsername) {
+    const el = document.createElement('div');
+    el.id = 'chat-incoming';
+    el.innerHTML = `<b>${fromUsername}</b> wants to talk.
+      <button id="chat-accept">Accept</button>
+      <button id="chat-decline">Decline</button>`;
+    Object.assign(el.style, {
+      position: 'fixed', top: '40%', left: '50%',
+      transform: 'translate(-50%,-50%)',
+      background: '#112', color: '#cce', padding: '16px 24px',
+      fontFamily: 'Courier New', fontSize: '14px',
+      border: '2px solid #5566aa', borderRadius: '8px', zIndex: 1010,
+      textAlign: 'center',
+    });
+    document.body.appendChild(el);
+
+    document.getElementById('chat-accept').onclick = () => {
+      el.remove();
+      window.socket.emit('chat_accept', { with: fromUsername });
+      // chat_started will fire for both parties
+    };
+    document.getElementById('chat-decline').onclick = () => el.remove();
+    setTimeout(() => { if (el.parentNode) el.remove(); }, 15000);
+  }
+
+  _openChat(partnerUsername) {
+    if (this._chatOpen) return;
+    this._chatOpen    = true;
+    this._chatPartner = partnerUsername;
+    this._chatMsgCount = 0;
+
+    const panel = document.createElement('div');
+    panel.id = 'chat-panel';
+    panel.innerHTML = `
+      <div id="chat-title">💬 ${partnerUsername}</div>
+      <div id="chat-log"></div>
+      <div id="chat-input-row">
+        <input id="chat-input" type="text" maxlength="200" placeholder="Type a message…"/>
+        <button id="chat-send">Send</button>
+        <button id="chat-x">✕</button>
+      </div>`;
+    Object.assign(panel.style, {
+      position: 'fixed', bottom: '80px', right: '20px',
+      width: '300px', background: '#0d0d20',
+      border: '2px solid #3a3a6a', borderRadius: '8px',
+      fontFamily: 'Courier New', fontSize: '13px',
+      color: '#ccc', zIndex: 1020, display: 'flex', flexDirection: 'column',
+    });
+    document.body.appendChild(panel);
+
+    const sendMsg = () => {
+      const inp = document.getElementById('chat-input');
+      const txt = inp.value.trim();
+      if (!txt) return;
+      inp.value = '';
+      window.socket.emit('chat_message', { to: partnerUsername, text: txt });
+      this._appendChatMessage('You', txt);
+      // Social fatigue: -1E per 10 messages sent
+      this._chatMsgCount++;
+      if (this._chatMsgCount % 10 === 0) GameState.addEnergy(-1);
+    };
+
+    document.getElementById('chat-send').onclick = sendMsg;
+    document.getElementById('chat-input').onkeydown = e => {
+      if (e.key === 'Enter') { e.preventDefault(); sendMsg(); }
+    };
+    document.getElementById('chat-x').onclick = () => this._closeChat(false);
+  }
+
+  _appendChatMessage(from, text) {
+    const log = document.getElementById('chat-log');
+    if (!log) return;
+    const line = document.createElement('div');
+    line.innerHTML = `<span style="color:#88ccff">${from}:</span> ${text}`;
+    line.style.padding = '2px 0';
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  _closeChat(remote) {
+    if (!this._chatOpen) return;
+    if (!remote && this._chatPartner && window.socket) {
+      window.socket.emit('chat_close', { to: this._chatPartner });
+    }
+    this._chatOpen    = false;
+    this._chatPartner = null;
+    const panel = document.getElementById('chat-panel');
+    if (panel) panel.remove();
   }
 
   _moveOtherPlayer(username, x, y, facing) {
@@ -426,6 +615,43 @@ class GameScene extends Phaser.Scene {
       this.playerPants.setTint(t(cd.colors.pants));
       this.playerShoes.setTint(t(cd.colors.shoes));
     }
+  }
+
+  _enterHome() {
+    this.homeActive = true;
+    this.homePrompt.setVisible(false);
+    this.player.setVelocity(0, 0);
+    GameState._restingAtHome = true;
+    document.getElementById('hud').style.display = 'none';
+    this.scene.pause();
+    this.scene.launch('HomeScene');
+  }
+
+  _triggerFaint() {
+    // Prevent re-trigger while already at 0
+    GameState.energy = 1;
+    // Penalty: HP to 50%, lose 10% cash
+    GameState.hp = Math.floor(GameState.maxHp * 0.5);
+    const cashLost = Math.floor(GameState.money * 0.1);
+    GameState.addMoney(-cashLost);
+    GameState.addHp(0);   // emit hpChanged
+    // Teleport to home entrance (or spawn if home not yet placed)
+    const dest = this.homeEntrancePos || { x: 976, y: 976 };
+    this.player.setPosition(dest.x, dest.y);
+    // Show faint message briefly
+    const msg = this.add.text(this.scale.width / 2, this.scale.height / 2,
+      `You passed out!\n−$${cashLost} | HP → ${GameState.hp}`,
+      { fontFamily: 'Courier New', fontSize: '18px', color: '#ff4444',
+        stroke: '#000', strokeThickness: 3, align: 'center' }
+    ).setOrigin(0.5).setDepth(20).setScrollFactor(0);
+    this.time.delayedCall(2500, () => msg.destroy());
+    SaveManager.save();
+  }
+
+  _updateDayNight() {
+    if (!this.nightOverlay) return;
+    const isNight = GameState.hour >= 20 || GameState.hour < 7;
+    this.nightOverlay.setAlpha(isNight ? 0.3 : 0);
   }
 
   _enterPizzeria() {

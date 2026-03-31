@@ -257,6 +257,33 @@ def draw_pizzeria_tile(buf, bw, ox, oy):
     ty = oy + (TS - 5) // 2
     draw_text_px(buf, bw, tx, ty, 'PIZZA', yellow)
 
+def draw_home_tile(buf, bw, ox, oy):
+    """Home building tile — warm beige with a door and 'HOME' in blue."""
+    base  = (210, 190, 155, 255)
+    dark  = (160, 140, 105, 255)
+    roof  = ( 90,  55,  30, 255)
+    door  = ( 80,  50,  20, 255)
+    blue  = ( 60, 100, 200, 255)
+    fill_rect(buf, bw, ox, oy, TS, TS, base)
+    # Roof triangle (top rows)
+    for row in range(6):
+        margin = row
+        fill_rect(buf, bw, ox + margin, oy + row, TS - margin * 2, 1, roof)
+    # Door (centered, bottom half)
+    fill_rect(buf, bw, ox + 12, oy + 20, 8, 12, door)
+    # Two windows
+    fill_rect(buf, bw, ox +  4, oy + 15, 6, 6, (255, 255, 200, 200))
+    fill_rect(buf, bw, ox + 22, oy + 15, 6, 6, (255, 255, 200, 200))
+    outline_rect(buf, bw, ox, oy, TS, TS, dark)
+    # "HOME" text
+    FONT['H'] = [[1,0,0,1],[1,0,0,1],[1,1,1,1],[1,0,0,1],[1,0,0,1]]
+    FONT['M'] = [[1,0,0,1],[1,1,1,1],[1,0,0,1],[1,0,0,1],[1,0,0,1]]
+    FONT['E'] = [[1,1,1,1],[1,0,0,0],[1,1,1,0],[1,0,0,0],[1,1,1,1]]
+    tw = _text_width('HOME')
+    tx = ox + (TS - tw) // 2
+    ty = oy + 7
+    draw_text_px(buf, bw, tx, ty, 'HOME', blue)
+
 def draw_building_tile(buf, bw, ox, oy, idx):
     base, dark = BUILDING_COLORS[idx % len(BUILDING_COLORS)]
     fill_rect(buf, bw, ox, oy, TS, TS, base)
@@ -295,7 +322,8 @@ for i in range(10):
 # Row 2: named building tiles then remaining variants
 draw_casino_tile   (buf, IMG_W,  0,      TS * 2)   # GID 21 — casino
 draw_pizzeria_tile (buf, IMG_W,  TS,     TS * 2)   # GID 22 — pizzeria
-for i in range(2, 10):
+draw_home_tile     (buf, IMG_W,  TS * 2, TS * 2)   # GID 23 — home
+for i in range(3, 10):
     draw_building_tile(buf, IMG_W, i * TS, TS * 2, i)
 
 # Row 3: building variants repeated

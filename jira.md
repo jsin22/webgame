@@ -1,89 +1,59 @@
-================================================================================
-CITY-RPG: STATUS & BUG TRACKER
-================================================================================
+# NYC_GAME_MASTER_SPEC.md
 
-[ ACTIVE TASKS ]
---------------------------------------------------------------------------------
-(none)
+## I. SYSTEM BUGS & GLOBAL WORLD LOGIC
+-------------------------------------------------------------------------------
+[x] BUG-001: GLOBAL SERVER CLOCK SYNC
+    - Server maintains world_time {hour, minute, day}. Background thread ticks
+      1 real second = 1 game minute. Broadcasts `world_tick` to all clients.
+    - Start state: Thursday July 6th (day=4), 08:00.
+    - On login/register, server includes world_time in response; client calls
+      GameState.syncWorldTime() — overrides any saved per-player time.
+    - GameState.applyWorldTick() replaces tickClock(): updates h/m/d from server
+      and applies energy decay each tick.
+    - Time display is 12-hour AM/PM mode.
 
-[ CURRENT BUGS: HIGH PRIORITY ]
---------------------------------------------------------------------------------
-(none)
+[x] FEAT-001: DYNAMIC DAY/NIGHT CYCLE
+    - nightOverlay: fullscreen dark-blue rectangle (depth 1.5, between tiles and
+      player). Alpha 0.3 when hour >= 20 or hour < 7, else 0.
+    - Updated on every world_tick and on login sync.
 
-[ CURRENT BUGS: LOW PRIORITY / POLISH ]
---------------------------------------------------------------------------------
-(none)
+## II. THE VITALITY SYSTEM (HP & ENERGY)
+-------------------------------------------------------------------------------
+[x] FEAT-002: ENERGY DEPLETION ENGINE
+    - Passive decay: 0.066E per game-minute via applyWorldTick().
+      Fractional accumulator prevents integer drift.
+    - Active decay: -2E per completed pizzeria shift (_runShift).
+    - Critical state: SPEED halved (80 instead of 160) when E <= 10.
+    - Faint at E=0: _triggerFaint() teleports player to home entrance,
+      sets HP to 50%, loses 10% cash. Brief on-screen message shown.
+    - While GameState._restingAtHome=true, decay is replaced by +0.25E/min
+      recovery (15E/hr spec).
 
+[x] FEAT-003: HEALTH MECHANICS
+    - HP reduction only on Faint (set to 50% of maxHp).
+    - Recovery via Pizzeria food: Slice +20HP, Half +45HP, Full +80HP
+      (implemented in FEAT-05, already live).
+    - At HP=0 from future features, player loses all cash (hook ready
+      via GameState.addHp / hpChanged event).
 
-[ COMPLETED / FIXED ]
---------------------------------------------------------------------------------
-FEAT-05: Added pizza ordering to the pizzeria. PizzeriaScene now opens a lobby
-         screen with two choices — "ORDER FOOD" or "WORK A SHIFT". The food menu
-         offers Slice ($8, +20 HP), Half Pizza ($15, +45 HP +15 Energy), and Full
-         Pizza ($25, +80 HP +35 Energy). HP/Energy are capped at max, state is
-         auto-saved after each purchase. The work flow is unchanged (supply →
-         price → shift). Also fixed GameState.hp never reflecting in the HUD by
-         migrating _refreshHUD to read GameState.hp/maxHp and adding addHp() /
-         addEnergy() helpers that emit hpChanged / energyChanged events.
+## III. WORLD BUILDINGS & CORE LOOP
+-------------------------------------------------------------------------------
+[x] LOC-001: THE HOME (PLAYER RESIDENCE)
+    - HOME tile added (GID 23, row 2 col 2 in city_tiles.png).
+    - HOME_BLOCK = (0,1). Entrance: home_entrance object at col 5, row 19.
+    - HomeScene: launched like PizzeriaScene (pauses GameScene).
+      Shows current HP/Energy/Money, cosy flavour text, Leave button.
+    - Energy recovery: +0.25E per world_tick while _restingAtHome=true.
+    - Faint penalty does not apply while inside home.
 
-BUG-004: Two blackjack issues, same root cause: _makeBtn returned only the bg
-         rectangle, leaving the text label as an orphan object never stored or
-         hidden. So setVisible(false) hid the bg but left the text visible, causing
-         "PLAY AGAIN" to overlay the DEAL button at scene start (jumbled look)
-         and to remain after _reset() (making it seem like clicking did nothing).
-         Fix: store txt reference in _makeBtn and return a proxy object with
-         setVisible(v) that syncs both bg and txt. All existing callers work
-         unchanged since they only call setVisible() on the returned handle.
-
-BUG-003: Removed spiky male hair (deleted the alternating-pixel spike loops in
-         all 4 directions). Moved eyes, nose, and mouth 2px higher (cy-16/cy-12/
-         cy-9 instead of cy-14/cy-10/cy-7) in both sprites and CharacterCreator
-         preview. Creator preview and in-game sprites now match.
-
-BUG-002: "PLAY AGAIN" button text was jumbled — _makeBtn used label.length*10+20
-         for button width, which was too narrow for 13px Courier New with stroke.
-         Fixed by using label.length*13+24 and adding fixedWidth+align:'center'
-         to the text style to prevent overflow/wrapping.
-
-FEAT-04: Added mouth (pinkish 4px rect on front view, 1px on profiles) to all
-         face-visible directions. Shrunk ear rects from 2×4 to 2×3. Added spiky
-         male hair: 4 alternating dark pixels 1 row above the hair rect in all
-         directions (skipped for female). Also updated CharacterCreator preview.
-
-FEAT-03: Added ears (2×4 skin rect outside head circle), nose (2-px dark dot
-         below eyes), and pupils to all sprite directions in _draw_body. Shifted
-         hair rects/circles 1px higher (cy-23 / cy-20). Also added ears and nose
-         to CharacterCreator preview canvas.
-
-BUG-101: Shoe color bled onto top of player head.
-         Root cause: lo=[0,3,0,-3] caused shoe rects to reach oy+49 (1-2px
-         outside the 48px frame boundary), bleeding into the adjacent sprite
-         sheet row at y=48-49 — which maps to the very top of those frames
-         (above the character's head).
-         Fix: capped animation to lo=[0,1,0,-1] so shoe bottom reaches at most
-         oy+47 — exactly within frame bounds.
-
-FEAT-01: Casino building tile now spells out "CASINO" in gold pixel text on a
-         dark purple background with neon accent dots. Implemented via a 4x5
-         pixel font (draw_text_px) added to generate_assets.py.
-
-FEAT-02: Pizzeria building tile now spells out "PIZZA" in yellow pixel text on
-         a brick-red background with cream accent dots. Added draw_pizzeria_tile
-         (GID 22), PIZZERIA_BLOCK (1,2), and pizzeria_entrance object to
-         generate_map.py. Regenerated city_tiles.png and city.json.
-
-BUG-001: Shoe color bled into the pants region during walking animation.
-         Root cause: shoes used lo=[0,3,0,-3] offsets, causing one shoe to
-         move UP to cy+13 — 4px inside the pants region (cy+8-cy+17). The
-         depth-sort fix (pants 2.3 > shoes 2.1) was not reliable at runtime.
-         Fix: changed shoe base from cy+16 to cy+18 (one pixel below pants
-         bottom) and made animation downward-only using max(0,lo)/max(0,-lo),
-         so shoes can never enter the pants region regardless of frame.
-         Regenerated player_shoes.png.
-
-================================================================================
-NOTES FOR CLAUDE:
-- Always check the "ACTIVE TASKS" list before starting a new session.
-- When a bug is fixed, move it to the "COMPLETED" section.
-- Use the IDs (e.g., BUG-001) when explaining your code changes.
-================================================================================
+## IV. SOCIAL INTERACTION
+-------------------------------------------------------------------------------
+[x] SOC-001: PROXIMITY CHAT "HANDSHAKE"
+    - Click another player sprite → socket emit `chat_request` → target sees
+      "[Name] wants to talk. [Accept] [Decline]" overlay (15s timeout).
+    - On Accept: server routes `chat_started` to both parties; chat panel opens.
+    - Messages via `chat_message` socket event (relayed through server, max 200
+      chars). Sender also sees own message locally.
+    - Social fatigue: every 10 messages sent reduces E by 1.
+    - Chat close: clicking ✕ emits `chat_close` to notify partner.
+    - Server events added: chat_request, chat_accept, chat_message, chat_close.

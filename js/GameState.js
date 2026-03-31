@@ -95,23 +95,45 @@ const GameState = {
   },
 
   /**
-   * Called every frame from GameScene.update() with the frame delta (ms).
-   * 1 real second = 1 in-game minute  →  60 real seconds = 1 in-game hour.
+   * Called once per server world_tick (every real second = 1 game minute).
+   * Updates time from server data, applies energy decay, emits events.
    */
-  tickClock(deltaMs) {
-    const MS_PER_GAME_MINUTE = 1000; // 1 real second per game minute
-    this._clockMs += deltaMs;
-    if (this._clockMs >= MS_PER_GAME_MINUTE) {
-      const minutesToAdd = Math.floor(this._clockMs / MS_PER_GAME_MINUTE);
-      this._clockMs %= MS_PER_GAME_MINUTE;
-      this.minute += minutesToAdd;
-      if (this.minute >= 60) {
-        const hoursToAdd = Math.floor(this.minute / 60);
-        this.minute %= 60;
-        this.advanceHours(hoursToAdd);
-      } else if (window._phaserGame) {
-        window._phaserGame.events.emit('timeChanged', { hour: this.hour, minute: this.minute, day: this.day });
+  applyWorldTick(tick) {
+    this.hour   = tick.hour;
+    this.minute = tick.minute;
+    this.day    = tick.day;
+    if (window._phaserGame) {
+      window._phaserGame.events.emit('timeChanged', { hour: this.hour, minute: this.minute, day: this.day });
+    }
+
+    // Energy passive decay: 0.066E per game-minute (95E lost over 1,440 min)
+    if (!this._restingAtHome) {
+      this._energyFrac = (this._energyFrac || 0) + 0.066;
+      if (this._energyFrac >= 1) {
+        const lose = Math.floor(this._energyFrac);
+        this._energyFrac -= lose;
+        this.addEnergy(-lose);
       }
+    } else {
+      // Resting: +15E per in-game hour = 0.25E per minute
+      this._restFrac = (this._restFrac || 0) + 0.25;
+      if (this._restFrac >= 1) {
+        const gain = Math.floor(this._restFrac);
+        this._restFrac -= gain;
+        this.addEnergy(gain);
+      }
+    }
+  },
+
+  /**
+   * Apply the server world time immediately (called on login, no decay).
+   */
+  syncWorldTime(tick) {
+    this.hour   = tick.hour;
+    this.minute = tick.minute;
+    this.day    = tick.day;
+    if (window._phaserGame) {
+      window._phaserGame.events.emit('timeChanged', { hour: this.hour, minute: this.minute, day: this.day });
     }
   },
 };

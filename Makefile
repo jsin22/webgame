@@ -16,4 +16,7 @@ start:
 	@ngrok http $(PORT)
 	@kill $$(cat .server.pid) 2>/dev/null; rm -f .server.pid
 
-.PHONY: install serve tunnel start
+restart:
+	sudo systemctl restart webgame
+
+.PHONY: install serve tunnel start restart

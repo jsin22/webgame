@@ -260,10 +260,16 @@ class GameScene extends Phaser.Scene {
     // Time is now server-authoritative. world_tick fires every real second.
     if (window.socket) {
       window.socket.on('world_tick', tick => {
-        if (!this.homeActive) GameState.applyWorldTick(tick);
+        GameState.applyWorldTick(tick);
         this._updateDayNight();
-        // Check faint
-        if (GameState.energy <= 0) this._triggerFaint();
+        // Check faint (only outside home — faint penalties don't apply while resting)
+        if (GameState.energy <= 0 && !this.homeActive) this._triggerFaint();
+        // Periodic autosave every 60 ticks (~1 real minute) to persist energy/HP
+        this._saveTickCounter = (this._saveTickCounter || 0) + 1;
+        if (this._saveTickCounter >= 60) {
+          this._saveTickCounter = 0;
+          SaveManager.save();
+        }
       });
     }
 

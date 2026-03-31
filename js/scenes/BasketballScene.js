@@ -256,7 +256,7 @@ class BasketballScene extends Phaser.Scene {
       const dist = Math.hypot(dx, dy);
       if (dist < 12) return;
 
-      const power = Math.min(dist * 4.5, 980);
+      const power = Math.min(dist * 14.2, 3100);
       const ang   = Math.atan2(dy, dx);
       this._launch(Math.cos(ang) * power, Math.sin(ang) * power);
     });
@@ -269,7 +269,7 @@ class BasketballScene extends Phaser.Scene {
     const dx  = ptr.x - this._dragPt.x;
     const dy  = ptr.y - this._dragPt.y;
     const dist = Math.hypot(dx, dy);
-    const power = Math.min(dist * 4.5, 980);
+    const power = Math.min(dist * 14.2, 3100);
     const ang   = Math.atan2(dy, dx);
     const vx    = Math.cos(ang) * power;
     const vy    = Math.sin(ang) * power;
@@ -287,14 +287,14 @@ class BasketballScene extends Phaser.Scene {
     }
 
     // Power bar
-    const MAX  = 980;
+    const MAX  = 3100;
     const barW = 72, barH = 5;
     const barX = bx - barW / 2;
     const barY = by + 30;
     this._aimGfx.fillStyle(0x222222, 0.75);
     this._aimGfx.fillRect(barX, barY, barW, barH);
     const fill = (power / MAX) * barW;
-    const col  = power < 380 ? 0x44ff44 : power < 700 ? 0xffaa00 : 0xff4444;
+    const col  = power < 1200 ? 0x44ff44 : power < 2200 ? 0xffaa00 : 0xff4444;
     this._aimGfx.fillStyle(col, 0.9);
     this._aimGfx.fillRect(barX, barY, fill, barH);
   }
@@ -335,7 +335,7 @@ class BasketballScene extends Phaser.Scene {
     if (!this.celebrating) {
       this._checkScore();
       const spd = Math.hypot(this.ball.body.velocity.x, this.ball.body.velocity.y);
-      if (spd < 60) this._miss();
+      if (spd < 300 && this.ball.y > this.HOOP_Y) this._miss();
     }
   }
 

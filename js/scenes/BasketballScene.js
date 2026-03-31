@@ -147,15 +147,17 @@ class BasketballScene extends Phaser.Scene {
   // ── Ball ──────────────────────────────────────────────────────────────────
 
   _buildBall() {
-    this.SPAWN_X = 150;
-    this.SPAWN_Y = this.H - 95;
+    this.SPAWN_X = this.W / 2;
+    this.SPAWN_Y = this.H / 2;
 
     this.ball = this.physics.add.image(this.SPAWN_X, this.SPAWN_Y, 'bball');
     this.ball.setDepth(5);
-    this.ball.setBounce(0.65);
+    this.ball.setBounce(0.90);
     this.ball.setCircle(13);
     this.ball.body.allowGravity = false;
-    this.ball.setFriction(0.1, 0);
+    this.ball.setDragX(0);
+    this.ball.setDragY(0);
+    this._prevVy = 0;
 
     this._trailGfx = this.add.graphics().setDepth(4);
     this._aimGfx   = this.add.graphics().setDepth(4);
@@ -168,6 +170,14 @@ class BasketballScene extends Phaser.Scene {
 
     this.physics.world.on('worldbounds', (body) => {
       if (body.gameObject !== this.ball || !this.launched) return;
+      // Floor/ceiling bounce: only count if ball had real vertical velocity before impact
+      if (body.blocked.down || body.blocked.up) {
+        if (Math.abs(this._prevVy) < 120) return; // rolling skip, not a real bounce
+      }
+      // Side wall bounce: only count if ball was airborne (had vertical motion)
+      if (body.blocked.left || body.blocked.right) {
+        if (Math.abs(this._prevVy) < 60) return; // rolling into wall
+      }
       this.bounceCount++;
       this._updateBounceHUD();
       this.cameras.main.shake(65, 0.003);
@@ -304,6 +314,14 @@ class BasketballScene extends Phaser.Scene {
   update() {
     if (!this.launched) return;
 
+    // Store vertical velocity BEFORE physics resolves this frame's collisions
+    this._prevVy = this.ball.body.velocity.y;
+
+    // Apply floor friction only while touching the ground (simulates rolling deceleration)
+    if (this.ball.body.blocked.down) {
+      this.ball.body.velocity.x *= 0.88;
+    }
+
     // Ball trail
     this.ballTrail.push({ x: this.ball.x, y: this.ball.y });
     if (this.ballTrail.length > 20) this.ballTrail.shift();
@@ -317,7 +335,7 @@ class BasketballScene extends Phaser.Scene {
     if (!this.celebrating) {
       this._checkScore();
       const spd = Math.hypot(this.ball.body.velocity.x, this.ball.body.velocity.y);
-      if (spd < 22) this._miss();
+      if (spd < 60) this._miss();
     }
   }
 

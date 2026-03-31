@@ -7,9 +7,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 make          # starts python3 -m http.server 8080
 make PORT=3000  # custom port
+make restart  # sudo systemctl restart webgame  (production only)
 ```
 
 Open `http://localhost:8080` in a browser. No build step required.
+
+The backend is a Flask-SocketIO server (`app.py`). In production it runs as a systemd service (`webgame.service`). Start it manually with:
+
+```bash
+python3 app.py
+```
 
 ## Asset generation
 
@@ -24,18 +31,23 @@ Both scripts must be run from the repo root. `generate_assets.py` has no depende
 
 ## Architecture
 
-**Engine**: Phaser 3 (local copy at `vendor/phaser.min.js` for offline use). Arcade physics, no gravity.
+**Engine**: Phaser 3 (local copy at `vendor/phaser.min.js` for offline use). Arcade physics, no gravity (except inside BasketballScene which sets gravity.y = 650).
 
-**Scene lifecycle**: `BootScene` → `GameScene`. Add new scenes to `js/scenes/`, load them in `index.html` before `js/main.js`, and register them in the `scene` array in `js/main.js`.
+**Backend**: Flask-SocketIO (`app.py`) with `async_mode='threading'`. Player data persisted to `players.json`. Use `socketio.emit()` (not the handler-level `emit()`) for all cross-socket messages — handler emit silently drops in threading mode.
+
+**Scene lifecycle**: `BootScene` → `GameScene`. Mini-game scenes are launched on top of GameScene (`scene.launch`) and resume it on exit. All scenes are registered in `js/main.js` and loaded in `index.html`.
+
+Current scene list: `BootScene, GameScene, CasinoLobbyScene, RouletteScene, BlackjackScene, BasketballScene, PizzeriaScene, HomeScene`
 
 **Tilemap**: Tiled-format JSON (`assets/tilemaps/city.json`) with three layers:
 - `ground` — terrain tiles (roads, sidewalks, parks, intersections). No collision.
 - `buildings` — building tiles only; all non-empty tiles are solid (`setCollisionByExclusion([-1])`).
-- `objects` — Phaser object layer; currently holds the `spawn` point.
+- `objects` — Phaser object layer; holds `spawn`, venue entrance zones.
 
 **Tileset** (`assets/tilesets/city_tiles.png`, 10×4 tiles at 32×32 px):
 - Row 0 (GIDs 1–10): terrain — road plain, road-H dash, road-V dash, sidewalk, intersection, grass, park, water, extras
-- Rows 1–3 (GIDs 11–40): building colour variants (10 colours repeated)
+- Row 1 (GIDs 11–20): building colour variants
+- Row 2 (GIDs 21–24): named venues — casino (21), pizzeria (22), home (23), gym (24); GIDs 25–30: building variants
 
 **Player spritesheet** (`assets/sprites/player.png`, 4 cols × 4 rows, 32×48 px per frame):
 - Row 0 (frames 0–3): walk down
@@ -45,6 +57,69 @@ Both scripts must be run from the repo root. `generate_assets.py` has no depende
 
 **Map layout**: 60×60 tiles. Repeating 10-tile city block: `[road×3][sidewalk][building×5][sidewalk]`. The constant `PARK_BLOCKS` in `generate_map.py` lists `(blockCol, blockRow)` pairs that become park tiles instead of buildings.
 
+Named venue blocks (blockCol, blockRow):
+- Casino: (3, 2) — GID_CASINO = 21
+- Pizzeria: (1, 2) — GID_PIZZERIA = 22
+- Home: (0, 1) — GID_HOME = 23
+- Gym: (2, 0) — GID_GYM = 24
+
 **Physics world bounds** must always match the map size — `this.physics.world.setBounds(0, 0, map.widthInPixels, map.heightInPixels)` is set in `GameScene.create()`. Omitting this creates an invisible wall at the canvas edge (800×560).
 
-**HUD**: DOM overlay (`#hud` in `index.html`) updated each frame from `GameScene._refreshHUD()`. The minimap is a second Phaser camera (`this.minimapCam`) zoomed to show the full world; the player dot (`this.minimapDot`) is hidden from the main camera via `cameras.main.ignore()`.
+**HUD**: DOM overlay (`#hud` in `index.html`) updated each frame from `GameScene._refreshHUD()`. Shows HP, energy, money, day/date/time, rank. The minimap is a second Phaser camera (`this.minimapCam`) zoomed to show the full world; the player dot (`this.minimapDot`) is hidden from the main camera via `cameras.main.ignore()`.
+
+## Global state
+
+**`GameState`** (`js/GameState.js`): singleton holding HP, energy, money, day, time, rank. Methods `addMoney()`, `addHp()`, `addEnergy()` emit change events picked up by `GameScene._refreshHUD()`. `applyWorldTick()` advances time and decays/recovers stats. `GameState.dateStr` derives a real calendar date from `this.day` starting at July 3, 2025.
+
+**`SaveManager`** (`js/SaveManager.js`): calls `socket.emit('save_state', ...)`. Autosave triggered every 60 world-ticks in `GameScene`. Also saves on `beforeunload` (tab close) if socket is connected.
+
+**`CharacterCreator`** (`js/CharacterCreator.js`): shown on connect. Supports full character creation and "Play as Guest" (random name/colors, never persisted, deleted from server on disconnect).
+
+## Movement
+
+**Arrow keys only** — WASD is disabled. `this.inputKeys` in `GameScene` only binds `{ up, down, left, right }`. Player cannot move while a venue scene is active.
+
+## Multiplayer
+
+Remote players are rendered as 4-layer sprites (body, shirt, pants, shoes) driven by an invisible physics image. Stored in `this._others` keyed by display username.
+
+Socket events: `player_joined`, `player_moved`, `player_left`, `others` (full snapshot on join).
+
+**Chat system**: click a player → context menu → Chat. Sends invite; target accepts/declines. Players in chat show a 💬 bubble. Busy players cannot receive new invites. Chat does not block movement. Chat history per partner stored in `this._chatHistory`.
+
+**Guest players**: random name from preset list, random gender/colors. Key in `players` dict is `username.lower()` (no prefix). Never written to `players.json`. Deleted on disconnect.
+
+## Venues / mini-games
+
+All venues are entered via proximity + E key. On enter: `scene.pause('GameScene')`, `scene.launch('XxxScene')`. On exit: scene stops itself, resumes GameScene, emits `game.events.emit('xxxExit')` which GameScene listens for to reposition the player.
+
+| Venue | Scene | Entrance object | Block |
+|-------|-------|-----------------|-------|
+| Casino | CasinoLobbyScene → RouletteScene / BlackjackScene | `casino_entrance` | (3,2) |
+| Pizzeria | PizzeriaScene | `pizzeria_entrance` | (1,2) |
+| Home | HomeScene | `home_entrance` | (0,1) |
+| Gym | BasketballScene | `gym_entrance` | (2,0) |
+
+## BasketballScene — "Bounce Chain"
+
+Side-view physics mini-game. `physics.world.gravity.y = 650`.
+
+**Physics tuning**:
+- `ball.setBounce(0.90)` — 90% energy retained per wall hit; keeps ball live through multi-wall chains
+- `ball.setDragX(0); ball.setDragY(0)` — no drag in flight; floor friction applied manually in `update()` via `velocity.x *= 0.88` only when `body.blocked.down`
+- Bounce counter uses pre-collision `_prevVy` (stored each frame before physics resolves) to filter rolling: floor/ceiling hits only count if `|prevVy| ≥ 120`; side wall hits only count if `|prevVy| ≥ 60`
+- Settle/miss triggers when `Math.hypot(vx, vy) < 60`
+
+**Scoring**: base 2 pts × multiplier (1×/2×/5×/10× for 0/1+/3+/5+ bounces).
+
+**Hoop**: right side of court, fixed position. Ball must pass through with `vy > 20` (downward).
+
+## Production
+
+Systemd service files: `webgame.service` (Flask app) and `webgame-ngrok.service` (ngrok tunnel). Copy to `/etc/systemd/system/`. Use `make restart` to apply after `git pull`.
+
+Cache-Control headers are set in `app.py` for `.js`, `.css`, `.html` responses to prevent stale-asset issues after deploys.
+
+Werkzeug request logs are suppressed (`logging.getLogger('werkzeug').setLevel(logging.WARNING)`).
+
+Socket.IO disconnect detection: `ping_interval=10, ping_timeout=5` — players removed within ~15 seconds of tab close.

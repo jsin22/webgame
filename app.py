@@ -24,6 +24,9 @@ from flask import Flask, send_from_directory, request
 from flask_socketio import SocketIO, emit
 
 # ── App setup ──────────────────────────────────────────────────────────────────
+import logging
+logging.getLogger('werkzeug').setLevel(logging.WARNING)
+
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading',
                     allow_upgrades=False)

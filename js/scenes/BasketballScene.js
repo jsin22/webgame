@@ -23,7 +23,7 @@ class BasketballScene extends Phaser.Scene {
     this.H = this.scale.height;  // 560
 
     this.GROUND_Y      = this.H - 70;   // 490 — where player feet land
-    this.PLAYER_SPEED  = 220;
+    this.PLAYER_SPEED  = 130;
     this.SECTION_LEN   = 1500;
     this.WORLD_W       = 500000;
 
@@ -108,13 +108,6 @@ class BasketballScene extends Phaser.Scene {
       g.lineBetween(13, 0, 13, 26); g.lineBetween(0, 13, 26, 13);
     });
 
-    make('bball_player', 24, 42, g => {
-      g.fillStyle(0x4488ff); g.fillRect(4, 16, 16, 20);   // jersey
-      g.fillStyle(0xf0c090); g.fillCircle(12, 10, 10);    // head
-      g.fillStyle(0x2255cc); g.fillRect(4, 36, 7, 6);     // left shoe
-      g.fillRect(13, 36, 7, 6);                            // right shoe
-    });
-
     // Obstacle: LOW — bench/cooler on ground
     make('bball_low', 52, 34, g => {
       g.fillStyle(0x885522); g.fillRect(0, 0, 52, 34);
@@ -184,10 +177,35 @@ class BasketballScene extends Phaser.Scene {
   // ── Player ─────────────────────────────────────────────────────────────────
 
   _buildPlayer() {
-    const spawnY = this.GROUND_Y - 21;   // feet at GROUND_Y
-    this.player = this.physics.add.image(160, spawnY, 'bball_player');
-    this.player.setCollideWorldBounds(false).setDepth(5);
-    this.player.body.setSize(18, 36).setOffset(3, 3);
+    // Spawn y: body.bottom lands at GROUND_Y using offset 22 on a 48px-tall sprite
+    const spawnY = this.GROUND_Y - 22;   // body.bottom = spawnY + 22 = GROUND_Y
+    const cd     = window.characterData || {};
+    const t      = hex => parseInt((hex || '#ffffff').replace('#', ''), 16);
+    const bodyKey = cd.gender === 'female' ? 'player_body_female' : 'player_body_male';
+
+    // Invisible physics driver
+    this.player = this.physics.add.sprite(160, spawnY, bodyKey, 0);
+    this.player.setAlpha(0).setCollideWorldBounds(false);
+    this.player.body.setSize(20, 24).setOffset(6, 22);
+
+    // Visual layers — same pattern as GameScene
+    this._pBody  = this.add.sprite(160, spawnY, bodyKey,       0).setDepth(5.0);
+    this._pShirt = this.add.sprite(160, spawnY, 'player_shirt', 0).setDepth(5.2)
+      .setTint(t(cd.colors && cd.colors.shirt));
+    this._pShoes = this.add.sprite(160, spawnY, 'player_shoes', 0).setDepth(5.1)
+      .setTint(t(cd.colors && cd.colors.shoes));
+    this._pPants = this.add.sprite(160, spawnY, 'player_pants', 0).setDepth(5.3)
+      .setTint(t(cd.colors && cd.colors.pants));
+
+    // Ensure walk-right animation exists (GameScene registers it, but be safe)
+    if (!this.anims.exists('bball-walk-right')) {
+      this.anims.create({
+        key: 'bball-walk-right',
+        frames: this.anims.generateFrameNumbers(bodyKey, { start: 8, end: 11 }),
+        frameRate: 8, repeat: -1,
+      });
+    }
+    this.player.anims.play('bball-walk-right', true);
 
     this.physics.add.collider(this.player, this._ground, () => {
       this._isOnGround = true;
@@ -195,6 +213,28 @@ class BasketballScene extends Phaser.Scene {
 
     this._ballSprite = this.add.image(0, 0, 'bball_ball').setDepth(6);
     this._shotSprite = this.add.image(0, 0, 'bball_ball').setDepth(6).setVisible(false);
+  }
+
+  // Apply position + current animation frame to all visual layers
+  _syncLayers() {
+    const fi = this.player.anims.currentFrame
+      ? this.player.anims.currentFrame.index
+      : 8;
+    const x = this.player.x, y = this.player.y;
+    this._pBody .setFrame(fi).setPosition(x, y);
+    this._pShirt.setFrame(fi).setPosition(x, y);
+    this._pShoes.setFrame(fi).setPosition(x, y);
+    this._pPants.setFrame(fi).setPosition(x, y);
+  }
+
+  _layerAlpha(a) {
+    this._pBody.setAlpha(a); this._pShirt.setAlpha(a);
+    this._pShoes.setAlpha(a); this._pPants.setAlpha(a);
+  }
+
+  _layerScale(sx, sy) {
+    this._pBody.setScale(sx, sy); this._pShirt.setScale(sx, sy);
+    this._pShoes.setScale(sx, sy); this._pPants.setScale(sx, sy);
   }
 
   // ── Crush Wall ─────────────────────────────────────────────────────────────
@@ -261,6 +301,27 @@ class BasketballScene extends Phaser.Scene {
     lb.on('pointerup',   () => this._exit());
     lb.on('pointerover', () => lb.setFillStyle(0x221508));
     lb.on('pointerout',  () => lb.setFillStyle(0x110900));
+
+    // Controls panel — fixed bottom-left corner
+    this.add.rectangle(72, this.H - 52, 144, 68, 0x000000, 0.72)
+      .setStrokeStyle(1, 0x334455).setScrollFactor(sf).setDepth(depth);
+    const ctrlStyle = {
+      fontFamily: 'Courier New', fontSize: '10px',
+      stroke: '#000', strokeThickness: 2,
+    };
+    const controls = [
+      { key: '↑ / W',     color: '#88ffcc', action: 'Jump       (LOW)' },
+      { key: '⇧ / D',     color: '#ffdd88', action: 'Crossover  (HIGH)' },
+      { key: '↓ / S',     color: '#ff88cc', action: 'Spin       (DEF)' },
+      { key: 'SPACE',     color: '#aaddff', action: 'Shoot Meter' },
+    ];
+    controls.forEach((c, i) => {
+      const y = this.H - 80 + i * 14;
+      this.add.text(8,  y, c.key,    { ...ctrlStyle, color: c.color })
+        .setScrollFactor(sf).setDepth(depth + 1);
+      this.add.text(56, y, c.action, { ...ctrlStyle, color: '#778899' })
+        .setScrollFactor(sf).setDepth(depth + 1);
+    });
   }
 
   // ── Double-Apex meter UI ───────────────────────────────────────────────────
@@ -425,6 +486,9 @@ class BasketballScene extends Phaser.Scene {
 
     this._isOnGround = this.player.body.blocked.down;
 
+    // Sync visual layers to physics driver every frame
+    this._syncLayers();
+
     // Carried ball follows player
     const ballKey = this.heatCheck ? 'bball_fire' : 'bball_ball';
     if (this._ballSprite.texture.key !== ballKey) this._ballSprite.setTexture(ballKey);
@@ -488,21 +552,21 @@ class BasketballScene extends Phaser.Scene {
     }
     if (this._spinFrames > 0) {
       this._spinFrames--;
-      this.player.setAlpha(0.35 + Math.sin(Date.now() / 40) * 0.35);
+      this._layerAlpha(0.35 + Math.sin(Date.now() / 40) * 0.35);
     } else if (!this._crossover) {
-      this.player.setAlpha(1);
+      this._layerAlpha(1);
     }
 
     // Crossover (Shift / D) — visual squish, flag for high-obstacle bypass
     const crossHeld = this._keys.shift.isDown || this._keys.d.isDown;
     if (crossHeld && !this._crossover) {
       this._crossover = true;
-      this.player.setScale(1, 0.55);
-      this.player.setAlpha(0.7);
+      this._layerScale(1, 0.55);
+      this._layerAlpha(0.7);
     } else if (!crossHeld && this._crossover) {
       this._crossover = false;
-      this.player.setScale(1, 1);
-      if (this._spinFrames === 0) this.player.setAlpha(1);
+      this._layerScale(1, 1);
+      if (this._spinFrames === 0) this._layerAlpha(1);
     }
 
     this._updateWall(dt);

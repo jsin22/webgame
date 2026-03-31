@@ -71,6 +71,15 @@
         socket.on('connect_error', () => {
           CharacterCreator.showError('Cannot connect to server. Is app.py running?');
         });
+
+        // Final save when the tab is closed or refreshed.
+        // socket.emit is best-effort here; most browsers will dispatch it
+        // before tearing down the connection.
+        window.addEventListener('beforeunload', () => {
+          if (window.socket && window.socket.connected) {
+            SaveManager.save();
+          }
+        });
       });
     </script>
   </div>

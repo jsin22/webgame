@@ -115,7 +115,10 @@ def index():
 
 @app.route('/<path:path>')
 def static_files(path):
-    return send_from_directory('.', path)
+    resp = send_from_directory('.', path)
+    if path.endswith(('.js', '.css', '.html')):
+        resp.headers['Cache-Control'] = 'no-cache, must-revalidate'
+    return resp
 
 
 # ── Socket events ──────────────────────────────────────────────────────────────

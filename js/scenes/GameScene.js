@@ -244,6 +244,28 @@ class GameScene extends Phaser.Scene {
     ).setDepth(1.5);
     this._updateDayNight();
 
+    // ── Gym entrance ─────────────────────────────────────────────────────────
+    const gymObj = map.findObject('objects', o => o.name === 'gym_entrance');
+    if (gymObj) {
+      this.gymEntrancePos = {
+        x: gymObj.x + gymObj.width  / 2,
+        y: gymObj.y + gymObj.height / 2,
+      };
+    }
+    this.gymActive = false;
+
+    this.gymPrompt = this.add.text(0, 0, 'Press E to enter Gym', {
+      fontFamily: 'Courier New', fontSize: '12px', color: '#ff8820',
+      stroke: '#000000', strokeThickness: 3,
+      backgroundColor: '#00000066', padding: { x: 6, y: 3 },
+    }).setOrigin(0.5, 1).setDepth(5).setVisible(false);
+
+    this.game.events.on('basketballExit', () => {
+      this.gymActive = false;
+      document.getElementById('hud').style.display = '';
+      if (this.player) this.player.y += 80;
+    }, this);
+
     // ── Home entrance ─────────────────────────────────────────────────────────
     const homeObj = map.findObject('objects', o => o.name === 'home_entrance');
     if (homeObj) {
@@ -373,8 +395,23 @@ class GameScene extends Phaser.Scene {
       }
     }
 
+    // ── Gym entrance proximity ────────────────────────────────────────────────
+    if (this.gymEntrancePos && !this.gymActive && !this.casinoActive && !this.pizzeriaActive && !this.homeActive) {
+      const dx   = this.player.x - this.gymEntrancePos.x;
+      const dy   = this.player.y - this.gymEntrancePos.y;
+      const near = Math.sqrt(dx * dx + dy * dy) < 80;
+
+      this.gymPrompt
+        .setVisible(near)
+        .setPosition(this.player.x, this.player.y - 44);
+
+      if (near && Phaser.Input.Keyboard.JustDown(this.inputKeys.e)) {
+        this._enterGym();
+      }
+    }
+
     // ── Home entrance proximity ───────────────────────────────────────────────
-    if (this.homeEntrancePos && !this.homeActive && !this.casinoActive && !this.pizzeriaActive) {
+    if (this.homeEntrancePos && !this.homeActive && !this.casinoActive && !this.pizzeriaActive && !this.gymActive) {
       const dx   = this.player.x - this.homeEntrancePos.x;
       const dy   = this.player.y - this.homeEntrancePos.y;
       const near = Math.sqrt(dx * dx + dy * dy) < 80;
@@ -793,6 +830,16 @@ class GameScene extends Phaser.Scene {
     if (!this.nightOverlay) return;
     const isNight = GameState.hour >= 20 || GameState.hour < 7;
     this.nightOverlay.setAlpha(isNight ? 0.3 : 0);
+  }
+
+  _enterGym() {
+    this.gymActive = true;
+    this.gymPrompt.setVisible(false);
+    this.player.setVelocity(0, 0);
+    document.getElementById('hud').style.display = 'none';
+    this._hidePlayerMenu();
+    this.scene.pause();
+    this.scene.launch('BasketballScene');
   }
 
   _enterPizzeria() {

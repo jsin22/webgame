@@ -1,0 +1,79 @@
+Game Concept: “Bounce Chain”
+Core Idea
+
+You don’t shoot directly into the hoop.
+
+Instead, you shoot the ball to bounce off objects (walls, pads, moving surfaces) and try to land it in the basket.
+
+Think:
+
+Simple like a tap-and-shoot game
+But strategic like a puzzle + skill combo
+Core Gameplay Loop
+Tap and drag → aim your shot (angle + power)
+Release → ball launches
+Ball bounces off surfaces
+Score if it lands in the hoop
+
+That’s it. Super simple.
+
+What Makes It Addictive
+1. Combo System (The Hook)
+Every bounce before scoring = multiplier
+1 bounce = 2x
+3 bounces = 5x
+5+ bounces = crazy points
+
+Players start chasing cool trick shots, not just scoring.
+
+2. Dynamic Objects
+
+Each level introduces ONE new twist:
+
+Moving walls
+Gravity zones
+Bounce pads (super launch)
+Sticky surfaces (slow motion effect)
+Portals
+
+This keeps it fresh without complexity.
+
+3. “Last Shot Almost Went In” Feeling
+
+Design near-misses intentionally:
+
+Rim-outs
+Close rebounds
+
+This creates that “one more try” addiction loop.
+
+4. Endless Mode
+Randomized layouts
+Increasing difficulty
+Score chase
+
+Perfect for quick sessions.
+
+5. Satisfying Feedback
+Clean swish sound
+Slow-motion on high combo shots
+Screen shake on crazy bounces
+
+Make every successful shot feel earned.
+
+Controls (Keep It Minimal)
+Drag = aim
+Release = shoot
+That’s all
+
+No buttons. No clutter.
+
+Art Style Ideas
+Clean 2D (like minimalist mobile games)
+Or neon arcade style (glow trails on ball)
+Ball leaves a trail showing bounce path (visually satisfying)
+Why This Works
+Easy to learn (anyone can shoot)
+Hard to master (angles + physics)
+Replayable (infinite trick shot possibilities)
+Short sessions (perfect mobile loop)

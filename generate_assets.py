@@ -284,6 +284,32 @@ def draw_home_tile(buf, bw, ox, oy):
     ty = oy + 7
     draw_text_px(buf, bw, tx, ty, 'HOME', blue)
 
+def draw_gym_tile(buf, bw, ox, oy):
+    """Gym building tile — dark teal with orange trim and 'GYM'."""
+    base   = (15, 55, 70, 255)
+    dark   = (10, 35, 45, 255)
+    orange = (255, 130, 30, 255)
+
+    fill_rect(buf, bw, ox, oy, TS, TS, base)
+    draw_line_h(buf, bw, ox, oy,          TS, orange)
+    draw_line_h(buf, bw, ox, oy + TS - 1, TS, orange)
+    draw_line_v(buf, bw, ox, oy,          TS, orange)
+    draw_line_v(buf, bw, ox + TS - 1, oy, TS, orange)
+    # Basketball dot pattern along edges
+    for i in range(3, TS - 3, 5):
+        c = orange if (i // 5) % 2 == 0 else (220, 220, 220, 255)
+        set_px(buf, bw, ox + i, oy + 2,      c)
+        set_px(buf, bw, ox + i, oy + TS - 3, c)
+    # Small basketball circle in top-right
+    fill_circle(buf, bw, ox + 24, oy + 9, 4, (220, 80, 20, 255))
+    outline_rect(buf, bw, ox, oy, TS, TS, dark)
+    # "GYM" text
+    FONT['G'] = [[0,1,1,1],[1,0,0,0],[1,0,1,1],[1,0,0,1],[0,1,1,0]]
+    FONT['Y'] = [[1,0,0,1],[0,1,1,0],[0,1,0,0],[0,1,0,0],[0,1,0,0]]
+    FONT['M'] = [[1,0,0,1],[1,1,1,1],[1,0,0,1],[1,0,0,1],[1,0,0,1]]
+    tw = _text_width('GYM')
+    draw_text_px(buf, bw, ox + (TS - tw) // 2, oy + (TS - 5) // 2, 'GYM', orange)
+
 def draw_building_tile(buf, bw, ox, oy, idx):
     base, dark = BUILDING_COLORS[idx % len(BUILDING_COLORS)]
     fill_rect(buf, bw, ox, oy, TS, TS, base)
@@ -323,7 +349,8 @@ for i in range(10):
 draw_casino_tile   (buf, IMG_W,  0,      TS * 2)   # GID 21 — casino
 draw_pizzeria_tile (buf, IMG_W,  TS,     TS * 2)   # GID 22 — pizzeria
 draw_home_tile     (buf, IMG_W,  TS * 2, TS * 2)   # GID 23 — home
-for i in range(3, 10):
+draw_gym_tile      (buf, IMG_W,  TS * 3, TS * 2)   # GID 24 — gym
+for i in range(4, 10):
     draw_building_tile(buf, IMG_W, i * TS, TS * 2, i)
 
 # Row 3: building variants repeated

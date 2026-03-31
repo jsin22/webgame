@@ -42,11 +42,13 @@ GID_PARK         = 7
 GID_CASINO       = 21   # row 2 col 0 in tileset — casino tile
 GID_PIZZERIA     = 22   # row 2 col 1 in tileset — pizzeria tile
 GID_HOME         = 23   # row 2 col 2 in tileset — home tile
+GID_GYM          = 24   # row 2 col 3 in tileset — gym tile
 
 # Blocks reserved for named venues
 CASINO_BLOCK   = (3, 2)
 PIZZERIA_BLOCK = (1, 2)
 HOME_BLOCK     = (0, 1)
+GYM_BLOCK      = (2, 0)
 
 def building_gid(bc, br):
     """Returns GID 11-20 based on block position."""
@@ -89,6 +91,8 @@ def tile_gids(col, row):
         return GID_SIDEWALK, GID_PIZZERIA
     elif (bc, br) == HOME_BLOCK:
         return GID_SIDEWALK, GID_HOME
+    elif (bc, br) == GYM_BLOCK:
+        return GID_SIDEWALK, GID_GYM
     else:
         return GID_SIDEWALK, building_gid(bc, br)
 
@@ -119,7 +123,7 @@ tiled_map = {
     "version": "1.10",
     "tiledversion": "1.10.0",
     "nextlayerid": 4,
-    "nextobjectid": 4,
+    "nextobjectid": 6,
     "layers": [
         {
             "id": 1,
@@ -196,6 +200,19 @@ tiled_map = {
                     "type": "home_entrance",
                     "x": 5 * TS,
                     "y": 19 * TS,
+                    "width":  3 * TS,
+                    "height": TS,
+                    "rotation": 0,
+                    "visible": True,
+                },
+                {
+                    # South-face entrance of the gym block (2,0).
+                    # Interior cols 24-28, south sidewalk row 9.
+                    "id": 5,
+                    "name": "gym_entrance",
+                    "type": "gym_entrance",
+                    "x": 25 * TS,
+                    "y": 9 * TS,
                     "width":  3 * TS,
                     "height": TS,
                     "rotation": 0,

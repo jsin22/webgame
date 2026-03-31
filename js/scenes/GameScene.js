@@ -18,8 +18,6 @@ class GameScene extends Phaser.Scene {
   }
 
   create() {
-    // ── Restore save (if any) ─────────────────────────────────────────────────
-    SaveManager.load();
 
     // ── Tilemap ──────────────────────────────────────────────────────────────
     const map = this.make.tilemap({ key: 'city_map' });
@@ -52,6 +50,18 @@ class GameScene extends Phaser.Scene {
     // Shrink the physics body to the character's lower half (feet area)
     this.player.body.setSize(20, 24);
     this.player.body.setOffset(6, 22);
+
+    // ── Visual player layers (body + clothing) ──────────────────────────────
+    // Physics sprite drives movement/animation logic; these visual sprites
+    // mirror its frame each update so clothing can be tinted independently.
+    this.player.setAlpha(0);   // invisible — visual layers take over
+
+    // Depth order matters at the pants/shoe overlap: shoes(2.1) render below pants(2.3)
+    // so the bottom of the pants always covers the top edge of the shoes.
+    this.playerBody  = this.add.sprite(spawnX, spawnY, 'player_body_male', 0).setDepth(2.0);
+    this.playerShirt = this.add.sprite(spawnX, spawnY, 'player_shirt',     0).setDepth(2.2).setTint(0x2855d4);
+    this.playerShoes = this.add.sprite(spawnX, spawnY, 'player_shoes',     0).setDepth(2.1).setTint(0x6a3010);
+    this.playerPants = this.add.sprite(spawnX, spawnY, 'player_pants',     0).setDepth(2.3).setTint(0x1a1a1a);
 
     // ── Animations ───────────────────────────────────────────────────────────
     const anims = this.anims;
@@ -191,8 +201,17 @@ class GameScene extends Phaser.Scene {
     // Keep HUD in sync with GameState events
     this.game.events.on('moneyChanged', v => {
       if (this.moneyEl) this.moneyEl.textContent = `$${v}`;
-      // Persist wallet to server on every money change
-      if (window.socket) window.socket.emit('save_state', { money: v });
+      SaveManager.save();
+    }, this);
+
+    this.game.events.on('hpChanged', () => {
+      if (this.hpBar) this.hpBar.style.width = (GameState.hp / GameState.maxHp * 100) + '%';
+      if (this.hpVal) this.hpVal.textContent = `${GameState.hp}/${GameState.maxHp}`;
+    }, this);
+
+    this.game.events.on('energyChanged', () => {
+      if (this.energyBar) this.energyBar.style.width = (GameState.energy / GameState.maxEnergy * 100) + '%';
+      if (this.energyVal) this.energyVal.textContent = `${GameState.energy}/${GameState.maxEnergy}`;
     }, this);
 
     this.game.events.on('timeChanged', () => this._refreshTime(), this);
@@ -244,6 +263,14 @@ class GameScene extends Phaser.Scene {
     } else {
       this.player.anims.play(`idle-${this.facing}`, true);
     }
+
+    // ── Sync visual layers with physics sprite ────────────────────────────────
+    const fi = this.player.frame.name;
+    const px = this.player.x, py = this.player.y;
+    this.playerBody.setFrame(fi).setPosition(px, py);
+    this.playerShirt.setFrame(fi).setPosition(px, py);
+    this.playerPants.setFrame(fi).setPosition(px, py);
+    this.playerShoes.setFrame(fi).setPosition(px, py);
 
     // ── Name tag follows player ───────────────────────────────────────────────
     this.nameTag.setPosition(this.player.x, this.player.y - 28);
@@ -316,16 +343,15 @@ class GameScene extends Phaser.Scene {
   _initMultiplayer(data) {
     const { username, player, others } = data;
 
-    // Restore this player's saved position and wallet
+    // Restore saved position and all game state from server
     this.player.setPosition(player.x, player.y);
     this.nameTag.setText(username);
     this.playerData.name = username;
     if (this.charNameEl) this.charNameEl.textContent = username;
 
-    if (player.money !== undefined) {
-      GameState.money = player.money;
-      if (this.moneyEl) this.moneyEl.textContent = `$${GameState.money}`;
-    }
+    SaveManager.loadFromServer(player);
+    this._applyCharacterLayers(player);
+    this._refreshHUD();
 
     // Render players already online
     Object.entries(others || {}).forEach(([uname, pdata]) => {
@@ -390,6 +416,18 @@ class GameScene extends Phaser.Scene {
   }
 
   // ── Private helpers ─────────────────────────────────────────────────────────
+
+  _applyCharacterLayers(cd) {
+    const bodyKey = cd.gender === 'female' ? 'player_body_female' : 'player_body_male';
+    this.playerBody.setTexture(bodyKey);
+    if (cd.colors) {
+      const t = hex => parseInt(hex.replace('#', ''), 16);
+      this.playerShirt.setTint(t(cd.colors.shirt));
+      this.playerPants.setTint(t(cd.colors.pants));
+      this.playerShoes.setTint(t(cd.colors.shoes));
+    }
+  }
+
   _enterPizzeria() {
     this.pizzeriaActive = true;
     this.pizzeriaPrompt.setVisible(false);
@@ -409,9 +447,9 @@ class GameScene extends Phaser.Scene {
   }
 
   _refreshHUD() {
-    const { hp, maxHp, name } = this.playerData;
-    if (this.hpBar)      this.hpBar.style.width      = (hp / maxHp * 100) + '%';
-    if (this.hpVal)      this.hpVal.textContent       = `${hp}/${maxHp}`;
+    const name = this.playerData ? this.playerData.name : 'Hero';
+    if (this.hpBar)      this.hpBar.style.width      = (GameState.hp / GameState.maxHp * 100) + '%';
+    if (this.hpVal)      this.hpVal.textContent       = `${GameState.hp}/${GameState.maxHp}`;
     if (this.charNameEl) this.charNameEl.textContent  = name;
     if (this.moneyEl)    this.moneyEl.textContent     = `$${GameState.money}`;
 

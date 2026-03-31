@@ -26,11 +26,7 @@ class PizzeriaScene extends Phaser.Scene {
     this._elements    = [];   // all display objects, cleared on phase change
     this._escHandler  = null;
 
-    if (GameState.hour < 10 || GameState.hour >= 22) {
-      this._buildClosed();
-    } else {
-      this._buildSupplyPhase();
-    }
+    this._buildLobby();
   }
 
   // ════════════════════════════════════════════════════════════════════════════
@@ -119,6 +115,130 @@ class PizzeriaScene extends Phaser.Scene {
   }
 
   // ════════════════════════════════════════════════════════════════════════════
+  // Lobby — choose between ordering food or working a shift
+  // ════════════════════════════════════════════════════════════════════════════
+
+  _buildLobby() {
+    this._clear();
+    this._bg();
+    this._title('🍕  PIZZA PALACE');
+
+    this._text(
+      `Balance: $${GameState.money}  |  HP: ${GameState.hp}/${GameState.maxHp}  |  Energy: ${GameState.energy}/${GameState.maxEnergy}`,
+      this.W / 2, 82, { size: '12px', color: '#aaaaaa' }
+    );
+
+    // Decorative divider
+    this._panel(this.W / 2, 115, 480, 2, 0x3a2200, 0xff9900);
+
+    // ORDER FOOD button
+    this._panel(this.W / 2, 230, 440, 120, 0x1a0e00, 0xff9900);
+    this._text('🍕  ORDER FOOD', this.W / 2, 205, { size: '18px', color: '#ff9900' });
+    this._text('Buy a slice or a whole pizza to restore HP and energy',
+      this.W / 2, 238, { size: '11px', color: '#887755' });
+    this._button(this.W / 2, 268, 'ORDER →', 0x3a1e00, 0x5a3200,
+      () => this._buildMenu(), 200, 40);
+
+    // WORK button
+    const workOpen = GameState.hour >= 10 && GameState.hour < 22;
+    this._panel(this.W / 2, 390, 440, 120, workOpen ? 0x001a00 : 0x111111, workOpen ? 0x50ff80 : 0x333333);
+    this._text('💼  WORK A SHIFT', this.W / 2, 365, { size: '18px', color: workOpen ? '#50ff80' : '#444' });
+    this._text(
+      workOpen ? 'Manage supplies & pricing to earn commission' : `Closed until 10:00 AM  (now ${this._fmtTime()})`,
+      this.W / 2, 398, { size: '11px', color: workOpen ? '#558855' : '#555' }
+    );
+    this._button(
+      this.W / 2, 428,
+      workOpen ? 'WORK →' : 'CLOSED',
+      workOpen ? 0x0a2a0a : 0x1a1a1a,
+      workOpen ? 0x1a4a1a : 0x1a1a1a,
+      () => { if (workOpen) this._buildSupplyPhase(); else this._buildClosed(); },
+      200, 40
+    );
+
+    this._button(70, this.H - 52, 'LEAVE', 0x2a2a2a, 0x444444, () => this._exit(), 110, 36);
+    this._setEsc(() => this._exit());
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // Food Menu
+  // ════════════════════════════════════════════════════════════════════════════
+
+  _buildMenu() {
+    this._clear();
+    this._bg();
+    this._title('🍕  PIZZA PALACE — Menu');
+
+    this._text(
+      `Balance: $${GameState.money}  |  HP: ${GameState.hp}/${GameState.maxHp}  |  Energy: ${GameState.energy}/${GameState.maxEnergy}`,
+      this.W / 2, 82, { size: '12px', color: '#aaaaaa' }
+    );
+
+    const ITEMS = [
+      { name: 'Slice',       price:  8, hp: 20, energy:  0 },
+      { name: 'Half Pizza',  price: 15, hp: 45, energy: 15 },
+      { name: 'Full Pizza',  price: 25, hp: 80, energy: 35 },
+    ];
+
+    ITEMS.forEach((item, i) => {
+      const y         = 165 + i * 95;
+      const canAfford = GameState.money >= item.price;
+      const full      = GameState.hp >= GameState.maxHp && GameState.energy >= GameState.maxEnergy;
+
+      this._panel(this.W / 2, y, 540, 78, canAfford ? 0x0d0f0a : 0x0d0d0d, canAfford ? 0x3a5a2a : 0x2a2a2a);
+
+      this._text(item.name, this.W / 2 - 200, y - 18, { size: '16px', color: canAfford ? '#ffffff' : '#555', ox: 0 });
+
+      let desc = `+${item.hp} HP`;
+      if (item.energy > 0) desc += `   +${item.energy} Energy`;
+      this._text(desc, this.W / 2 - 200, y + 10, { size: '12px', color: canAfford ? '#50ff80' : '#444', ox: 0 });
+
+      this._text(`$${item.price}`, this.W / 2 + 60, y, { size: '18px', color: canAfford ? '#ffd700' : '#444' });
+
+      this._button(
+        this.W / 2 + 195, y,
+        canAfford ? 'BUY' : 'N/A',
+        canAfford ? 0x1a3a0a : 0x1a1a1a,
+        canAfford ? 0x2a5a1a : 0x1a1a1a,
+        () => { if (canAfford) this._buyItem(item); },
+        80, 36
+      );
+    });
+
+    this._button(70, this.H - 52, '← BACK', 0x2a2a2a, 0x444444, () => this._buildLobby(), 110, 36);
+    this._setEsc(() => this._buildLobby());
+  }
+
+  _buyItem(item) {
+    GameState.addMoney(-item.price);
+    GameState.addHp(item.hp);
+    if (item.energy > 0) GameState.addEnergy(item.energy);
+    SaveManager.save();
+    this._buildPurchaseConfirm(item);
+  }
+
+  _buildPurchaseConfirm(item) {
+    this._clear();
+    this._bg(0x060f06);
+    this._title('🍕  PIZZA PALACE');
+
+    this._panel(this.W / 2, this.H / 2 - 30, 460, 170, 0x0a1a0a, 0x50ff80);
+    this._text('Enjoy your food! 🍕', this.W / 2, this.H / 2 - 70, { size: '20px', color: '#50ff80' });
+    this._text(`${item.name} — $${item.price} charged`, this.W / 2, this.H / 2 - 35, { size: '13px', color: '#aaa' });
+
+    let effect = `HP: ${GameState.hp}/${GameState.maxHp}`;
+    if (item.energy > 0) effect += `   Energy: ${GameState.energy}/${GameState.maxEnergy}`;
+    this._text(effect, this.W / 2, this.H / 2, { size: '14px', color: '#50ff80' });
+    this._text(`Balance: $${GameState.money}`, this.W / 2, this.H / 2 + 35, { size: '13px', color: '#ffd700' });
+
+    this._button(this.W / 2 - 90, this.H - 52, 'ORDER MORE', 0x1a3a0a, 0x2a5a1a,
+      () => this._buildMenu(), 160, 40);
+    this._button(this.W / 2 + 90, this.H - 52, 'LEAVE', 0x2a2a2a, 0x444444,
+      () => this._exit(), 140, 40);
+    this._setEsc(() => this._exit());
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
   // Phase: Closed
   // ════════════════════════════════════════════════════════════════════════════
 
@@ -129,8 +249,9 @@ class PizzeriaScene extends Phaser.Scene {
     this._text('CLOSED', this.W / 2, this.H / 2 - 35, { size: '22px', color: '#ff4444' });
     this._text(`Current time: ${this._fmtTime()}`, this.W / 2, this.H / 2);
     this._text('Shifts available: 10:00 AM – 10:00 PM', this.W / 2, this.H / 2 + 30, { color: '#888' });
-    this._button(this.W / 2, this.H - 60, 'LEAVE', 0x2a2a2a, 0x444444, () => this._exit());
-    this._setEsc(() => this._exit());
+    this._button(this.W / 2 - 80, this.H - 60, '← BACK', 0x2a2a2a, 0x444444, () => this._buildLobby(), 130, 36);
+    this._button(this.W / 2 + 80, this.H - 60, 'LEAVE', 0x2a2a2a, 0x444444, () => this._exit(), 110, 36);
+    this._setEsc(() => this._buildLobby());
   }
 
   // ════════════════════════════════════════════════════════════════════════════

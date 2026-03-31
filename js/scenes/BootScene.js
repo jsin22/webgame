@@ -36,6 +36,14 @@ class BootScene extends Phaser.Scene {
       frameWidth:  32,
       frameHeight: 48,
     });
+
+    // Layered player sprites (body + clothing, same frame layout as player.png)
+    const layerCfg = { frameWidth: 32, frameHeight: 48 };
+    this.load.spritesheet('player_body_male',   'assets/sprites/player_body_male.png',   layerCfg);
+    this.load.spritesheet('player_body_female', 'assets/sprites/player_body_female.png', layerCfg);
+    this.load.spritesheet('player_shirt',       'assets/sprites/player_shirt.png',       layerCfg);
+    this.load.spritesheet('player_pants',       'assets/sprites/player_pants.png',       layerCfg);
+    this.load.spritesheet('player_shoes',       'assets/sprites/player_shoes.png',       layerCfg);
   }
 
   create() {

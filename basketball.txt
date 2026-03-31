@@ -1,79 +1,58 @@
-Game Concept: “Bounce Chain”
-Core Idea
+Technical Requirements Spec: The Buzzer Beater Gauntlet
+1. Project Overview
+Genre: 2D Side-Scrolling Platformer / Precision Rhythm
+Perspective: Side-on 2D (like Mario or Flappy Bird)
+Core Loop: Navigate an obstacle-filled court $\rightarrow$ Enter Shot Zone $\rightarrow$ Execute Double-Apex Shot $\rightarrow$ Push back the "Crush Wall."
 
-You don’t shoot directly into the hoop.
+2. Movement & "The Run" Phase
+The player moves automatically to the right at a base velocity $V$. To survive, the player must use three basketball-specific moves to bypass obstacles.
+A. The Ability System
+JUMP (Key: W / Up): Standard vertical impulse. Used to clear Low Obstacles (coolers, benches, floor hazards).
+CROSSOVER (Key: Shift / D): A horizontal dash that shrinks the player’s hitbox. Used to slide under High Obstacles (low-hanging scoreboards, closing gates).
+SPIN MOVE (Key: S / Down): Grants "Invincibility Frames" (I-Frames) for 0.5 seconds but slightly reduces forward speed. Used to phase through Active Defenders (NPCs who attempt to steal/block).
+B. The Penalty (Stumble Logic)
+If a player hits an obstacle without the correct move:
+Velocity is set to $0$ for 0.5 seconds (Stunned).
+The Crush Wall (Dead Zone) continues moving, closing the gap significantly.
 
-Instead, you shoot the ball to bounce off objects (walls, pads, moving surfaces) and try to land it in the basket.
+3. The "Locked" State: Double-Apex Meter
+Upon entering a Shot Zone (a trigger area in front of a hoop), the player is "Locked." Forward movement stops, and a crosshair-style UI appears.
+A. Meter Interaction (Hold & Release)
+Phase 1 (The Power): A vertical bar oscillates between $0$ and $1$. The player Presses and Holds the Spacebar to lock the vertical "Power" at the desired apex.
+Phase 2 (The Aim): Immediately upon the hold, a horizontal bar begins oscillating. The player must Release the Spacebar to lock the horizontal "Aim."
+B. Success Thresholds
+Green Release (Apex): Both Power and Aim are within the top $10\%$ of the oscillation.
+Effect: Perfect Swish. The Crush Wall retreats 300px. Player gets a "Turbo" boost.
+White Release (Good): Both values are within $25\%$.
+Effect: Ball goes in. The Crush Wall stops for 1 second.
+The Brick (Fail): Values are below $60\%$.
+Effect: Ball clanks off rim. The player must wait for a 1.5-second "Rebound" animation while the Wall approaches.
 
-Think:
+4. The Danger: The Crush Wall
+A vertical red "Dead Zone" follows the player from the left edge of the screen.
+Base Speed: Wall Speed = Player Speed $\times$ $0.85$.
+Scaling: Every successful hoop increases the Wall's base speed by $5\%$.
+Game Over: If Player $x \leq$ Wall $x$.
 
-Simple like a tap-and-shoot game
-But strategic like a puzzle + skill combo
-Core Gameplay Loop
-Tap and drag → aim your shot (angle + power)
-Release → ball launches
-Ball bounces off surfaces
-Score if it lands in the hoop
+5. Technical Implementation Details (For Claude)
+"Please implement a prototype with the following logic:
+State Machine: Create three states: STATE_RUNNING, STATE_LOCKED, and STATE_REBOUND.
+Input Mapping: > * W = Jump
+S = Spin (Disable collisions for 30 frames)
+Shift = Crossover (Reduce player height by 50%)
+Space = Hold/Release for the Double-Apex Meter logic.
+Physics: Use a quadratic Bézier curve for the ball's trajectory, where the height is determined by powerVal and the end $x$-destination is determined by aimVal.
+Visuals: Use a red rectangle for the 'Crush Wall' and a simple circle for the ball. Create a 'Shot Zone' trigger that stops the player and initiates the meter UI.
+Procedural Spawning: Randomly spawn one of three obstacle types (Low, High, Defender) every 400 pixels between hoops."
 
-That’s it. Super simple.
+6. Audio/Visual "Essence" Cues
+Slow-Mo: Trigger a 0.5x time-scale effect when the player enters the Shot Zone to emphasize the "Clutch" moment.
+Camera Shake: Apply screen shake proportional to how close the Crush Wall is to the player.
+The "Heat Check": After 3 consecutive Green Releases, turn the ball into a fire sprite and double the "Wall Retreat" distance.
 
-What Makes It Addictive
-1. Combo System (The Hook)
-Every bounce before scoring = multiplier
-1 bounce = 2x
-3 bounces = 5x
-5+ bounces = crazy points
+Implementation Priority for V1:
+Basic Side-scroller movement + "Crush Wall" chase.
+"Double-Apex" Hold/Release logic (The Meter).
+Collision detection for the three move types (Jump, Cross, Spin).
 
-Players start chasing cool trick shots, not just scoring.
 
-2. Dynamic Objects
-
-Each level introduces ONE new twist:
-
-Moving walls
-Gravity zones
-Bounce pads (super launch)
-Sticky surfaces (slow motion effect)
-Portals
-
-This keeps it fresh without complexity.
-
-3. “Last Shot Almost Went In” Feeling
-
-Design near-misses intentionally:
-
-Rim-outs
-Close rebounds
-
-This creates that “one more try” addiction loop.
-
-4. Endless Mode
-Randomized layouts
-Increasing difficulty
-Score chase
-
-Perfect for quick sessions.
-
-5. Satisfying Feedback
-Clean swish sound
-Slow-motion on high combo shots
-Screen shake on crazy bounces
-
-Make every successful shot feel earned.
-
-Controls (Keep It Minimal)
-Drag = aim
-Release = shoot
-That’s all
-
-No buttons. No clutter.
-
-Art Style Ideas
-Clean 2D (like minimalist mobile games)
-Or neon arcade style (glow trails on ball)
-Ball leaves a trail showing bounce path (visually satisfying)
-Why This Works
-Easy to learn (anyone can shoot)
-Hard to master (angles + physics)
-Replayable (infinite trick shot possibilities)
-Short sessions (perfect mobile loop)

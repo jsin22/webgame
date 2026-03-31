@@ -31,10 +31,11 @@ class BasketballScene extends Phaser.Scene {
     this.physics.world.setBounds(0, 0, this.WORLD_W, this.H);
 
     // ── State machine ────────────────────────────────────────────────────────
+    this.ST_MENU    = 'menu';
     this.ST_RUNNING = 'running';
     this.ST_LOCKED  = 'locked';
     this.ST_REBOUND = 'rebound';
-    this.state      = this.ST_RUNNING;
+    this.state      = this.ST_MENU;
 
     // ── Game vars ────────────────────────────────────────────────────────────
     this.hoopsScored       = 0;
@@ -47,6 +48,8 @@ class BasketballScene extends Phaser.Scene {
     this._reboundTimer   = 0;
     this._spinFrames     = 0;
     this._crossover      = false;
+    this._crossoverTimer = 0;     // counts down while crossover is active
+    this._crossoverDur   = 0.38;  // total duration of one crossover move (seconds)
     this._isOnGround     = false;
 
     this._meterPhase = 0;   // 0=off, 1=power, 2=aim
@@ -74,6 +77,119 @@ class BasketballScene extends Phaser.Scene {
 
     this._spawnSection(0);
 
+    this._showStartMenu();
+  }
+
+  // ── Start Menu ────────────────────────────────────────────────────────────
+
+  _showStartMenu() {
+    const W = this.W, H = this.H;
+    const sf = 0, depth = 50;
+
+    this._menuContainer = this.add.container(0, 0).setScrollFactor(sf).setDepth(depth);
+
+    // Dim overlay
+    const overlay = this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.82).setScrollFactor(sf);
+
+    // Panel — sized to fit in 800×560 with breathing room
+    const PW = 520, PH = 430;
+    const panel = this.add.rectangle(W / 2, H / 2, PW, PH, 0x080614, 0.97)
+      .setStrokeStyle(2, 0x4466cc).setScrollFactor(sf);
+    this.add.rectangle(W / 2, H / 2, PW - 10, PH - 10, 0x000000, 0)
+      .setStrokeStyle(1, 0x223355).setScrollFactor(sf);
+
+    const cx = W / 2;            // horizontal center
+    const top = H / 2 - PH / 2; // panel top y
+
+    // Title
+    const title = this.add.text(cx, top + 22, 'BUZZER BEATER GAUNTLET', {
+      fontFamily: 'Courier New', fontSize: '19px', color: '#ffdd44',
+      stroke: '#000', strokeThickness: 4,
+    }).setOrigin(0.5).setScrollFactor(sf);
+
+    const subtitle = this.add.text(cx, top + 46, 'Outrun the Titan — score hoops to push him back!', {
+      fontFamily: 'Courier New', fontSize: '11px', color: '#8899bb',
+    }).setOrigin(0.5).setScrollFactor(sf);
+
+    this.add.rectangle(cx, top + 60, PW - 20, 1, 0x334466).setScrollFactor(sf);
+
+    // Controls — two columns that fit inside the panel
+    const kx = cx - 230;  // key column (left-aligned)
+    const ax = cx - 80;   // action column
+    const controls = [
+      { key: '↑ / W',        color: '#88ffcc', action: 'Jump over benches (LOW)' },
+      { key: 'SHIFT / D',    color: '#ffdd88', action: 'Crossover under scoreboards (HIGH)' },
+      { key: '↓ / S',        color: '#ff88cc', action: 'Spin through defenders' },
+      { key: 'SPACE hold',   color: '#aaddff', action: 'Lock power (shot zone)' },
+      { key: 'SPACE release',color: '#aaddff', action: 'Lock aim & shoot' },
+      { key: 'ESC',          color: '#ff8866', action: 'Leave gym' },
+    ];
+
+    const ctrlItems = controls.map((c, i) => {
+      const y = top + 76 + i * 24;
+      const k = this.add.text(kx, y, c.key, {
+        fontFamily: 'Courier New', fontSize: '12px', color: c.color,
+        stroke: '#000', strokeThickness: 2,
+      }).setScrollFactor(sf);
+      const a = this.add.text(ax, y, c.action, {
+        fontFamily: 'Courier New', fontSize: '11px', color: '#99aabb',
+      }).setScrollFactor(sf);
+      return [k, a];
+    }).flat();
+
+    this.add.rectangle(cx, top + 228, PW - 20, 1, 0x334466).setScrollFactor(sf);
+
+    // Obstacle quick-reference
+    const legendHeader = this.add.text(kx, top + 236, 'OBSTACLES', {
+      fontFamily: 'Courier New', fontSize: '11px', color: '#aaddff',
+    }).setScrollFactor(sf);
+    const legend = [
+      { color: '#88ffcc', text: '▬  LOW bench — JUMP' },
+      { color: '#ffdd88', text: '▮  HIGH scoreboard — CROSSOVER (times its fall!)' },
+      { color: '#ff88cc', text: '◆  DEFENDER — SPIN' },
+    ];
+    const legendObjs = legend.map((l, i) => {
+      return this.add.text(kx, top + 254 + i * 20, l.text, {
+        fontFamily: 'Courier New', fontSize: '11px', color: l.color,
+      }).setScrollFactor(sf);
+    });
+
+    // Tip
+    const tip = this.add.text(cx, top + 330, '3 greens in a row = HEAT CHECK  (+600px pushback!)', {
+      fontFamily: 'Courier New', fontSize: '10px', color: '#445566',
+    }).setOrigin(0.5).setScrollFactor(sf);
+
+    // START button
+    const btnBg = this.add.rectangle(cx, top + 362, 190, 38, 0x113322)
+      .setStrokeStyle(2, 0x44cc66).setInteractive({ useHandCursor: true }).setScrollFactor(sf);
+    const btnTxt = this.add.text(cx, top + 362, 'START GAME', {
+      fontFamily: 'Courier New', fontSize: '15px', color: '#66ff88',
+      stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5).setScrollFactor(sf);
+
+    btnBg.on('pointerover', () => btnBg.setFillStyle(0x1a4d33));
+    btnBg.on('pointerout',  () => btnBg.setFillStyle(0x113322));
+    btnBg.on('pointerup',   () => this._startGame());
+
+    const escTip = this.add.text(cx, top + 400, 'ESC — leave gym', {
+      fontFamily: 'Courier New', fontSize: '10px', color: '#664433',
+    }).setOrigin(0.5).setScrollFactor(sf);
+
+    this._menuContainer.add([overlay, panel, title, subtitle, ...ctrlItems,
+      legendHeader, ...legendObjs, tip, btnBg, btnTxt, escTip]);
+
+    // Keyboard shortcuts for menu
+    this.input.keyboard.once('keydown-ESC',   () => this._exit());
+    this.input.keyboard.once('keydown-ENTER', () => this._startGame());
+    this.input.keyboard.once('keydown-SPACE', () => this._startGame());
+  }
+
+  _startGame() {
+    if (this.state !== this.ST_MENU) return;
+    this._menuContainer.destroy();
+    this._menuContainer = null;
+    this.state = this.ST_RUNNING;
+    // Set up ESC to exit during gameplay
     this.input.keyboard.once('keydown-ESC', () => this._exit());
   }
 
@@ -237,30 +353,122 @@ class BasketballScene extends Phaser.Scene {
     this._pShoes.setScale(sx, sy); this._pPants.setScale(sx, sy);
   }
 
+  _layerAngle(a) {
+    this._pBody.setAngle(a); this._pShirt.setAngle(a);
+    this._pShoes.setAngle(a); this._pPants.setAngle(a);
+  }
+
   // ── Crush Wall ─────────────────────────────────────────────────────────────
 
   _buildWall() {
+    // Invisible position tracker — all game-logic reads/writes this._wall.x
     this._wall = this.add.rectangle(
-      this.player.x - 480, this.H / 2, 28, this.H, 0xff1111
-    ).setDepth(8);
+      this.player.x - 480, this.H / 2, 2, this.H, 0x000000, 0
+    ).setDepth(1);
+    // Graphics object redrawn each frame as a giant basketball player
     this._wallLines = this.add.graphics().setDepth(8);
-    this._wallLabel = this.add.text(0, this.H / 2 - 50, 'CRUSH\nWALL', {
-      fontFamily: 'Courier New', fontSize: '9px',
-      color: '#ffcccc', align: 'center',
+    this._wallLabel = this.add.text(0, 28, 'TITAN', {
+      fontFamily: 'Courier New', fontSize: '13px',
+      color: '#ff9999', stroke: '#000', strokeThickness: 3, align: 'center',
     }).setOrigin(0.5).setDepth(9);
   }
 
   _updateWall(dt) {
     this._wall.x += this.wallSpeed * dt;
     this._wallLabel.x = this._wall.x;
-    this._wallLines.clear();
-    // Animated "danger stripes" on wall
-    const t = (Date.now() / 300) % 1;
-    this._wallLines.lineStyle(2, 0xff6600, 0.7);
-    for (let i = 0; i < 8; i++) {
-      const yy = ((i + t) / 8) * this.H;
-      this._wallLines.lineBetween(this._wall.x - 10, yy, this._wall.x + 10, yy - 20);
-    }
+
+    const g  = this._wallLines;
+    g.clear();
+
+    const x   = this._wall.x;
+    const fy  = this.GROUND_Y;           // foot Y
+    const t   = Date.now() / 1000;
+    const str = Math.sin(t * 4.5) * 14; // stride oscillation
+
+    // Drop shadow
+    g.fillStyle(0x000000, 0.25);
+    g.fillEllipse(x, fy + 6, 130, 16);
+
+    // ── Shoes ──
+    g.fillStyle(0x111111);
+    g.fillRect(x - 38 + str * 0.4, fy - 16, 34, 16);
+    g.fillRect(x + 4 - str * 0.4,  fy - 16, 34, 16);
+    // sole highlight
+    g.fillStyle(0x444444);
+    g.fillRect(x - 38 + str * 0.4, fy - 3, 34, 3);
+    g.fillRect(x + 4 - str * 0.4,  fy - 3, 34, 3);
+
+    // ── Lower legs (shin) ──
+    g.lineStyle(18, 0xdd1111);
+    g.lineBetween(x - 20 + str,      fy - 80,  x - 20 + str * 0.4, fy - 16);
+    g.lineBetween(x + 20 - str,      fy - 80,  x + 20 - str * 0.4, fy - 16);
+
+    // ── Upper legs (thigh) ──
+    g.lineStyle(26, 0xcc1111);
+    g.lineBetween(x - 22, fy - 175,  x - 20 + str, fy - 80);
+    g.lineBetween(x + 22, fy - 175,  x + 20 - str, fy - 80);
+
+    // ── Shorts ──
+    g.fillStyle(0xaa0e0e);
+    g.fillRect(x - 50, fy - 205, 100, 38);
+    g.lineStyle(1, 0xff4444, 0.5);
+    g.strokeRect(x - 50, fy - 205, 100, 38);
+
+    // ── Jersey / torso ──
+    g.fillStyle(0xdd1111);
+    g.fillRect(x - 52, fy - 340, 104, 142);
+    // Jersey side stripes
+    g.fillStyle(0xffffff, 0.15);
+    g.fillRect(x - 52, fy - 340, 14, 142);
+    g.fillRect(x + 38,  fy - 340, 14, 142);
+    // Jersey number "00"
+    g.lineStyle(3, 0xffffff, 0.9);
+    g.strokeCircle(x - 16, fy - 270, 12);
+    g.strokeCircle(x + 16, fy - 270, 12);
+
+    // ── Arms ──
+    const aSwing = Math.sin(t * 4.5 + Math.PI) * 20;
+    g.lineStyle(24, 0xee1111);
+    g.lineBetween(x - 52, fy - 325, x - 84, fy - 240 + aSwing);
+    g.lineBetween(x + 52, fy - 325, x + 84, fy - 240 - aSwing);
+    // Forearms (skin)
+    g.lineStyle(19, 0xd4956a);
+    g.lineBetween(x - 84, fy - 240 + aSwing, x - 92, fy - 188 + aSwing * 0.5);
+    g.lineBetween(x + 84, fy - 240 - aSwing, x + 92, fy - 188 - aSwing * 0.5);
+    // Fists
+    g.fillStyle(0xd4956a);
+    g.fillCircle(x - 92, fy - 188 + aSwing * 0.5, 11);
+    g.fillCircle(x + 92, fy - 188 - aSwing * 0.5, 11);
+
+    // ── Neck ──
+    g.fillStyle(0xd4956a);
+    g.fillRect(x - 13, fy - 354, 26, 20);
+
+    // ── Head ──
+    g.fillStyle(0xd4956a);
+    g.fillCircle(x, fy - 376, 34);
+
+    // Hair
+    g.fillStyle(0x180a00);
+    g.fillEllipse(x, fy - 402, 64, 24);
+    g.fillRect(x - 32, fy - 410, 64, 15);
+
+    // Eyes — glaring, slightly angry
+    g.fillStyle(0xffffff);
+    g.fillRect(x - 20, fy - 385, 13, 9);
+    g.fillRect(x + 7,  fy - 385, 13, 9);
+    g.fillStyle(0x111111);
+    g.fillRect(x - 16, fy - 384, 7, 7);
+    g.fillRect(x + 10, fy - 384, 7, 7);
+    // Scowl brow
+    g.lineStyle(3, 0x3a1a00);
+    g.lineBetween(x - 22, fy - 393, x - 8, fy - 389);
+    g.lineBetween(x + 8,  fy - 389, x + 22, fy - 393);
+
+    // Sweat drops (intensity lines)
+    g.lineStyle(1, 0xff6666, 0.5);
+    g.lineBetween(x - 55, fy - 395, x - 70, fy - 418);
+    g.lineBetween(x + 55, fy - 395, x + 70, fy - 418);
   }
 
   // ── HUD ────────────────────────────────────────────────────────────────────
@@ -397,14 +605,27 @@ class BasketballScene extends Phaser.Scene {
   // ── Section spawning ───────────────────────────────────────────────────────
 
   _spawnSection(startX) {
-    const OBS_TYPES   = ['low', 'high', 'defender'];
-    const OBS_OFFSETS = [350, 700, 1050];
-    const HOOP_X      = startX + 1350;
-    const ZONE_X      = HOOP_X - 130;
+    const OBS_TYPES = ['low', 'high', 'defender'];
+    const HOOP_X    = startX + 1350;
+    const ZONE_X    = HOOP_X - 130;
 
-    for (let i = 0; i < 3; i++) {
+    // Obstacle count grows with hoops scored: 3 → up to 7
+    const count = Math.min(3 + Math.floor(this.hoopsScored / 2), 7);
+
+    // Generate random x positions in [150, ZONE_X - startX - 60], min 180px apart
+    const positions = [];
+    const maxX = ZONE_X - startX - 60;
+    let attempts = 0;
+    while (positions.length < count && attempts < 200) {
+      attempts++;
+      const px = Phaser.Math.Between(150, maxX);
+      if (positions.every(p => Math.abs(p - px) >= 180)) positions.push(px);
+    }
+    positions.sort((a, b) => a - b);
+
+    for (const offset of positions) {
       const type = OBS_TYPES[Phaser.Math.Between(0, 2)];
-      this._spawnObstacle(startX + OBS_OFFSETS[i], type);
+      this._spawnObstacle(startX + offset, type);
     }
 
     this._buildHoop(HOOP_X);
@@ -426,11 +647,12 @@ class BasketballScene extends Phaser.Scene {
       this._obstacles.push({ x, type: 'low', hit: false, img: obs });
 
     } else if (type === 'high') {
-      // Scoreboard hanging from ceiling — crossover under
-      // Hangs so its bottom is at GROUND_Y - 200, blocking standing height
-      const hangY = this.H * 0.38 + 30;   // attaches to ceiling line
-      const obs   = this.add.image(x, hangY, 'bball_high').setDepth(4);
-      this._obstacles.push({ x, type: 'high', hit: false, img: obs });
+      // Scoreboard falls from ceiling — hold CROSSOVER (Shift/D) to duck under it
+      const hangY  = this.H * 0.38 + 30;   // starting position (ceiling)
+      const blockY = this.GROUND_Y - 50;    // blocking height (overlaps standing player)
+      const obs    = this.add.image(x, hangY, 'bball_high').setDepth(4);
+      this._obstacles.push({ x, type: 'high', hit: false, img: obs,
+        fallen: false, startedFall: false, blockY });
 
     } else {
       // Defender — spin through; drifts slowly left toward player
@@ -482,6 +704,8 @@ class BasketballScene extends Phaser.Scene {
   // ── Main update ────────────────────────────────────────────────────────────
 
   update(time, delta) {
+    if (this.state === this.ST_MENU) return;
+
     const dt = delta / 1000;
 
     this._isOnGround = this.player.body.blocked.down;
@@ -557,16 +781,28 @@ class BasketballScene extends Phaser.Scene {
       this._layerAlpha(1);
     }
 
-    // Crossover (Shift / D) — visual squish, flag for high-obstacle bypass
-    const crossHeld = this._keys.shift.isDown || this._keys.d.isDown;
-    if (crossHeld && !this._crossover) {
+    // Crossover (Shift / D) — brief side-to-side dodge; must press at the right moment
+    const crossJust = Phaser.Input.Keyboard.JustDown(this._keys.shift)
+                   || Phaser.Input.Keyboard.JustDown(this._keys.d);
+    if (crossJust && this._crossoverTimer <= 0) {
+      this._crossoverTimer = this._crossoverDur;
       this._crossover = true;
-      this._layerScale(1, 0.55);
-      this._layerAlpha(0.7);
-    } else if (!crossHeld && this._crossover) {
-      this._crossover = false;
-      this._layerScale(1, 1);
-      if (this._spinFrames === 0) this._layerAlpha(1);
+    }
+    if (this._crossoverTimer > 0) {
+      this._crossoverTimer -= dt;
+      // Progress 0→1 over the move duration
+      const prog = 1 - this._crossoverTimer / this._crossoverDur;
+      // Full sine cycle: lean right → center → lean left → center
+      const sway = Math.sin(prog * Math.PI * 2) * 35;
+      this._layerAngle(sway);
+      this._layerScale(1 + Math.abs(sway) / 200, 1 - Math.abs(sway) / 280);
+      this._layerAlpha(0.8);
+      if (this._crossoverTimer <= 0) {
+        this._crossover = false;
+        this._layerAngle(0);
+        this._layerScale(1, 1);
+        if (this._spinFrames === 0) this._layerAlpha(1);
+      }
     }
 
     this._updateWall(dt);
@@ -604,7 +840,7 @@ class BasketballScene extends Phaser.Scene {
     this._wall.x += this.wallSpeed * dt;
     this._wallLabel.x = this._wall.x;
     this._reboundTimer -= dt;
-    if (this._reboundTimer <= 0) this._exitRebound();
+    if (this._reboundTimer <= 0) this._retryShot();
   }
 
   // ── Obstacle detection ─────────────────────────────────────────────────────
@@ -614,13 +850,26 @@ class BasketballScene extends Phaser.Scene {
     for (const obs of this._obstacles) {
       if (obs.hit) continue;
       const ox = obs.moving ? obs.img.x : obs.x;
+
+      // Trigger scoreboard fall when player is ~110px away — tight timing window
+      if (obs.type === 'high' && !obs.startedFall && px > ox - 110) {
+        obs.startedFall = true;
+        this.tweens.add({
+          targets: obs.img,
+          y: obs.blockY,
+          duration: 480,
+          ease: 'Bounce.Out',
+          onComplete: () => { obs.fallen = true; },
+        });
+      }
+
       if (Math.abs(px - ox) > 28) continue;  // not at obstacle x yet
 
       obs.hit = true;
 
       const safe =
-        (obs.type === 'low'      && !this._isOnGround)  ||
-        (obs.type === 'high'     && this._crossover)     ||
+        (obs.type === 'low'      && !this._isOnGround)                 ||
+        (obs.type === 'high'     && (this._crossover || !obs.fallen))   ||
         (obs.type === 'defender' && this._spinFrames > 0);
 
       if (!safe) this._stun(obs.type);
@@ -755,7 +1004,6 @@ class BasketballScene extends Phaser.Scene {
     } else {
       this.consecutiveGreens = 0;
       this.heatCheck = false;
-      this._showMsg('BRICK — REBOUND...', '#ff4444');
       this.cameras.main.shake(180, 0.012);
       this._enterRebound();
     }
@@ -774,20 +1022,28 @@ class BasketballScene extends Phaser.Scene {
 
   _enterRebound() {
     this.state = this.ST_REBOUND;
-    this._reboundTimer = 1.5;
+    this._reboundTimer = 1.2;
     this.player.body.velocity.x = 0;
     this.player.body.allowGravity = false;
     this.tweens.add({
       targets: this.player,
       y: this.player.y - 12,
-      yoyo: true, repeat: 3, duration: 175,
+      yoyo: true, repeat: 3, duration: 150,
     });
+    this._showMsg('BRICK — REBOUND! Try again!', '#ff4444');
   }
 
-  _exitRebound() {
-    this.state = this.ST_RUNNING;
-    this.player.body.allowGravity = true;
-    this._activeHoop = null;
+  _retryShot() {
+    // Re-enter the shot meter — player must make it to proceed
+    this.state = this.ST_LOCKED;
+    this.player.body.allowGravity = false;
+    this._meterPhase = 1;
+    this._meterTime  = 0;
+    this._meterHint.setText('HOLD SPACE → lock POWER');
+    this._powerFill.setSize(20, 0);
+    this._aimFill.setSize(0, 20);
+    this._meter.setVisible(true);
+    this._showMsg('Make the shot to keep running!', '#ffaa33');
   }
 
   // ── HUD refresh ────────────────────────────────────────────────────────────
@@ -796,7 +1052,7 @@ class BasketballScene extends Phaser.Scene {
     this._scoreText.setText(`Score: ${this.hoopsScored}`);
     const d   = Math.max(0, Math.floor(wallDist));
     const col = d < 120 ? '#ff3333' : d < 280 ? '#ffaa33' : '#88ff88';
-    this._wallText.setText(`Wall: ${d}px`).setColor(col);
+    this._wallText.setText(`Titan: ${d}px`).setColor(col);
     this._heatText.setText(
       this.heatCheck            ? '🔥 HEAT CHECK'
       : this.consecutiveGreens > 0 ? `🟢 ×${this.consecutiveGreens}`

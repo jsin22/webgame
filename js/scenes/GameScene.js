@@ -698,7 +698,7 @@ class GameScene extends Phaser.Scene {
     const ap  = h < 12 ? 'AM' : 'PM';
     const h12 = h % 12 || 12;
     if (this.timeEl) this.timeEl.textContent = `${h12}:${String(m).padStart(2,'0')} ${ap}`;
-    if (this.dayEl)  this.dayEl.textContent  = `${GameState.dayName}${GameState.isWeekend ? ' ★' : ''}`;
+    if (this.dayEl)  this.dayEl.textContent  = `${GameState.dayName}, ${GameState.dateStr}${GameState.isWeekend ? ' ★' : ''}`;
     if (this.rankEl) this.rankEl.textContent = GameState.rankName;
   }
 }

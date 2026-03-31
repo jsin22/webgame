@@ -34,6 +34,15 @@ const GameState = {
     return d === 5 || d === 6;  // Saturday or Sunday
   },
 
+  // Start: Thursday July 6 = day 4. Offset so day 1 = July 3 (Monday).
+  get dateStr() {
+    const epoch = new Date(2025, 6, 3); // July 3, 2025
+    const d = new Date(epoch);
+    d.setDate(d.getDate() + (this.day - 1));
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return `${months[d.getMonth()]} ${d.getDate()}`;
+  },
+
   get isDay() {
     return this.hour >= 6 && this.hour < 18;
   },

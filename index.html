@@ -40,7 +40,7 @@
         <span id="time-val">8:00 AM</span>
         <span id="rank-val" class="rank-badge">Trainee</span>
       </div>
-      <div id="controls-hint">WASD / Arrows — move &nbsp;|&nbsp; E — interact</div>
+      <div id="controls-hint">Arrows — move &nbsp;|&nbsp; E — interact</div>
     </div>
 
     <!-- Global state and persistence (loaded before scenes) -->
@@ -55,6 +55,7 @@
     <script src="js/scenes/RouletteScene.js"></script>
     <script src="js/scenes/BlackjackScene.js"></script>
     <script src="js/scenes/PizzeriaScene.js"></script>
+    <script src="js/scenes/HomeScene.js"></script>
     <script src="js/main.js"></script>
 
     <script>
@@ -69,6 +70,15 @@
 
         socket.on('connect_error', () => {
           CharacterCreator.showError('Cannot connect to server. Is app.py running?');
+        });
+
+        // Final save when the tab is closed or refreshed.
+        // socket.emit is best-effort here; most browsers will dispatch it
+        // before tearing down the connection.
+        window.addEventListener('beforeunload', () => {
+          if (window.socket && window.socket.connected) {
+            SaveManager.save();
+          }
         });
       });
     </script>

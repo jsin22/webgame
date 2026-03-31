@@ -58,6 +58,7 @@ const CharacterCreator = {
           <div class="creator-subtitle">Choose your path</div>
           <button class="cc-btn" id="cc-btn-new">Create New Player</button>
           <button class="cc-btn" id="cc-btn-returning" style="background:#0d0d20;border-color:#3a3a6a;color:#aaa">Returning Player</button>
+          <button class="cc-btn" id="cc-btn-guest" style="background:#0d0d20;border-color:#2a4a2a;color:#6a9a6a;margin-top:4px">Play as Guest</button>
         </div>
 
         <!-- Create view -->
@@ -107,6 +108,7 @@ const CharacterCreator = {
     // Main view buttons
     document.getElementById('cc-btn-new').addEventListener('click', () => this._showView('create'));
     document.getElementById('cc-btn-returning').addEventListener('click', () => this._showView('login'));
+    document.getElementById('cc-btn-guest').addEventListener('click', () => this._doGuest());
 
     // Gender toggle
     document.querySelectorAll('.gender-btn').forEach(btn => {
@@ -229,6 +231,18 @@ const CharacterCreator = {
       status.textContent = data.error;
       status.className = 'cc-status error';
       btn.disabled = false;
+    });
+  },
+
+  _doGuest() {
+    const btn = document.getElementById('cc-btn-guest');
+    btn.disabled = true;
+    btn.textContent = 'Joining…';
+    window.socket.emit('guest_login');
+    window.socket.once('login_success', data => this._complete(data));
+    window.socket.once('login_error',   data => {
+      btn.disabled = false;
+      btn.textContent = 'Play as Guest';
     });
   },
 

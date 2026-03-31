@@ -415,6 +415,7 @@ class PizzeriaScene extends Phaser.Scene {
 
     // Apply earnings and progress
     GameState.addMoney(Math.round(commission));
+    GameState.addEnergy(-2);   // FEAT-002: active work drains extra energy
     GameState.shiftsWorked++;
     GameState._updateRank();
     const promoted = GameState.jobRank > rankBefore;

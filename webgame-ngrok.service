@@ -1,0 +1,12 @@
+[Unit]
+Description=City RPG ngrok Tunnel
+After=network.target webgame.service
+
+[Service]
+ExecStart=ngrok http 8080 --log=stdout
+Restart=on-failure
+RestartSec=5
+User=jsin
+
+[Install]
+WantedBy=multi-user.target

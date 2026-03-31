@@ -103,16 +103,28 @@ class GameScene extends Phaser.Scene {
       down:  Phaser.Input.Keyboard.KeyCodes.DOWN,
       left:  Phaser.Input.Keyboard.KeyCodes.LEFT,
       right: Phaser.Input.Keyboard.KeyCodes.RIGHT,
-      w:     Phaser.Input.Keyboard.KeyCodes.W,
-      s:     Phaser.Input.Keyboard.KeyCodes.S,
-      a:     Phaser.Input.Keyboard.KeyCodes.A,
-      d:     Phaser.Input.Keyboard.KeyCodes.D,
     });
 
-    // Prevent arrow keys from scrolling the browser page
+    // Prevent arrow keys / space from scrolling the browser page,
+    // but only when no text input is focused.
     this.input.keyboard.on('keydown', e => {
+      const el = document.activeElement;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return;
       const blocked = ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '];
       if (blocked.includes(e.key)) e.preventDefault();
+    });
+
+    // Disable Phaser keyboard input while any DOM text input is focused
+    this.input.keyboard.enableGlobalCapture();
+    document.addEventListener('focusin',  e => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        this.input.keyboard.disableGlobalCapture();
+      }
+    });
+    document.addEventListener('focusout', e => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        this.input.keyboard.enableGlobalCapture();
+      }
     });
 
     // ── Minimap (second camera) ───────────────────────────────────────────────
@@ -223,6 +235,56 @@ class GameScene extends Phaser.Scene {
 
     this.game.events.on('multiplayerLogin', data => this._initMultiplayer(data), this);
 
+    // ── Night overlay (FEAT-001) ──────────────────────────────────────────────
+    // Fullscreen dark rectangle placed between tiles (depth 1.5) and player (2).
+    this.nightOverlay = this.add.rectangle(
+      map.widthInPixels / 2, map.heightInPixels / 2,
+      map.widthInPixels, map.heightInPixels,
+      0x000033, 0
+    ).setDepth(1.5);
+    this._updateDayNight();
+
+    // ── Home entrance ─────────────────────────────────────────────────────────
+    const homeObj = map.findObject('objects', o => o.name === 'home_entrance');
+    if (homeObj) {
+      this.homeEntrancePos = {
+        x: homeObj.x + homeObj.width  / 2,
+        y: homeObj.y + homeObj.height / 2,
+      };
+    }
+    this.homeActive = false;
+
+    this.homePrompt = this.add.text(0, 0, 'Press E to enter Home', {
+      fontFamily: 'Courier New', fontSize: '12px', color: '#a0d0ff',
+      stroke: '#000000', strokeThickness: 3,
+      backgroundColor: '#00000066', padding: { x: 6, y: 3 },
+    }).setOrigin(0.5, 1).setDepth(5).setVisible(false);
+
+    this.game.events.on('homeExit', () => {
+      this.homeActive = false;
+      GameState._restingAtHome = false;
+      document.getElementById('hud').style.display = '';
+      if (this.player) this.player.y += 80;
+      this._refreshHUD();
+    }, this);
+
+    // ── World clock (BUG-001) ─────────────────────────────────────────────────
+    // Time is now server-authoritative. world_tick fires every real second.
+    if (window.socket) {
+      window.socket.on('world_tick', tick => {
+        GameState.applyWorldTick(tick);
+        this._updateDayNight();
+        // Check faint (only outside home — faint penalties don't apply while resting)
+        if (GameState.energy <= 0 && !this.homeActive) this._triggerFaint();
+        // Periodic autosave every 60 ticks (~1 real minute) to persist energy/HP
+        this._saveTickCounter = (this._saveTickCounter || 0) + 1;
+        if (this._saveTickCounter >= 60) {
+          this._saveTickCounter = 0;
+          SaveManager.save();
+        }
+      });
+    }
+
     // Player data (expandable later)
     this.playerData = { name: 'Hero', hp: 100, maxHp: 100 };
     this._refreshHUD();
@@ -230,16 +292,15 @@ class GameScene extends Phaser.Scene {
 
   // ── Update ─────────────────────────────────────────────────────────────────
   update(time, delta) {
-    // ── Clock tick ────────────────────────────────────────────────────────────
-    GameState.tickClock(delta);
-
-    const SPEED = 160;
+    // Time is now driven by server world_tick — no local tick needed.
+    // Speed is halved when energy is critically low (≤10).
+    const SPEED = GameState.energy <= 10 ? 80 : 160;
     const k     = this.inputKeys;
 
-    const goLeft  = k.left.isDown  || k.a.isDown;
-    const goRight = k.right.isDown || k.d.isDown;
-    const goUp    = k.up.isDown    || k.w.isDown;
-    const goDown  = k.down.isDown  || k.s.isDown;
+    const goLeft  = k.left.isDown;
+    const goRight = k.right.isDown;
+    const goUp    = k.up.isDown;
+    const goDown  = k.down.isDown;
 
     let vx = 0, vy = 0;
     if (goLeft)  vx -= SPEED;
@@ -312,6 +373,21 @@ class GameScene extends Phaser.Scene {
       }
     }
 
+    // ── Home entrance proximity ───────────────────────────────────────────────
+    if (this.homeEntrancePos && !this.homeActive && !this.casinoActive && !this.pizzeriaActive) {
+      const dx   = this.player.x - this.homeEntrancePos.x;
+      const dy   = this.player.y - this.homeEntrancePos.y;
+      const near = Math.sqrt(dx * dx + dy * dy) < 80;
+
+      this.homePrompt
+        .setVisible(near)
+        .setPosition(this.player.x, this.player.y - 44);
+
+      if (near && Phaser.Input.Keyboard.JustDown(this.inputKeys.e)) {
+        this._enterHome();
+      }
+    }
+
     // ── Multiplayer: emit position + animate other players ────────────────────
     if (window.socket) {
       const now = Date.now();
@@ -324,11 +400,16 @@ class GameScene extends Phaser.Scene {
         });
       }
 
-      // Switch other players to idle when they haven't moved recently
+      // Sync remote player visual layers to their driver animation each frame
       this._otherPlayers.forEach(p => {
         if (Date.now() - p.lastUpdate > 150) {
-          p.sprite.anims.play(`idle-${p.facing}`, true);
+          p.driver.anims.play(`idle-${p.facing}`, true);
         }
+        const fi = p.driver.frame.name;
+        p.body.setFrame(fi);
+        p.shirt.setFrame(fi);
+        p.pants.setFrame(fi);
+        p.shoes.setFrame(fi);
       });
     }
   }
@@ -351,7 +432,13 @@ class GameScene extends Phaser.Scene {
 
     SaveManager.loadFromServer(player);
     this._applyCharacterLayers(player);
+    // Sync world time from server (overrides any saved per-player time)
+    if (data.world_time) GameState.syncWorldTime(data.world_time);
+    this._updateDayNight();
     this._refreshHUD();
+
+    this._chatHistory = {};  // partnerUsername → [{from, text}, ...]
+    this._chatBusy    = new Set(); // usernames currently in a chat session
 
     // Render players already online
     Object.entries(others || {}).forEach(([uname, pdata]) => {
@@ -372,46 +459,288 @@ class GameScene extends Phaser.Scene {
     socket.on('player_left', ({ username: uname }) => {
       this._removeOtherPlayer(uname);
     });
+
+    // ── SOC-001: Proximity chat ───────────────────────────────────────────────
+    socket.on('chat_incoming', ({ from }) => {
+      this._showChatRequest(from);
+    });
+    socket.on('chat_started', ({ with: partner }) => {
+      this._openChat(partner);
+    });
+    socket.on('chat_message', ({ from, text }) => {
+      this._appendChatMessage(from, text);
+    });
+    socket.on('chat_closed', () => {
+      this._closeChat(true);
+    });
+
+    socket.on('chat_status', ({ username, busy }) => {
+      if (busy) this._chatBusy.add(username);
+      else      this._chatBusy.delete(username);
+      const p = this._otherPlayers.get(username);
+      if (p) p.chatBubble.setVisible(busy);
+    });
   }
 
   _addOtherPlayer(username, data) {
     if (this._otherPlayers.has(username)) return;
 
-    const sprite = this.add.sprite(data.x, data.y, 'player', 0);
-    sprite.setDepth(2).setTint(0xaaddff);  // blue tint distinguishes remote players
-    sprite.anims.play(`idle-${data.facing || 'down'}`, true);
+    const x = data.x || 0, y = data.y || 0;
+    const facing = data.facing || 'down';
+    const t = hex => parseInt((hex || '#ffffff').replace('#', ''), 16);
+    const colors = data.colors || {};
+    const bodyKey = data.gender === 'female' ? 'player_body_female' : 'player_body_male';
 
-    const nameTag = this.add.text(data.x, data.y - 28, username, {
+    // Invisible driver sprite — owns the animation state
+    const driver = this.add.sprite(x, y, 'player', 0).setAlpha(0);
+    driver.anims.play(`idle-${facing}`, true);
+
+    // Visual layers (same depth order as local player)
+    const body  = this.add.sprite(x, y, bodyKey,        0).setDepth(2.0);
+    const shirt = this.add.sprite(x, y, 'player_shirt', 0).setDepth(2.2).setTint(t(colors.shirt || '#2855d4'));
+    const shoes = this.add.sprite(x, y, 'player_shoes', 0).setDepth(2.1).setTint(t(colors.shoes || '#6a3010'));
+    const pants = this.add.sprite(x, y, 'player_pants', 0).setDepth(2.3).setTint(t(colors.pants || '#1a1a1a'));
+
+    // Clickable hit area — opens the player interaction menu
+    body.setInteractive({ useHandCursor: true });
+    body.on('pointerup', (pointer) => {
+      this._showPlayerMenu(username, pointer.x, pointer.y);
+    });
+
+    const displayName = data.username || username;
+    const nameTag = this.add.text(x, y - 28, displayName, {
       fontFamily: 'Courier New', fontSize: '10px',
       color: '#88ccff', stroke: '#000000', strokeThickness: 3,
     }).setOrigin(0.5, 1).setDepth(3);
 
-    // Hide name tags from the minimap
-    this.minimapCam.ignore(nameTag);
+    const chatBubble = this.add.text(x, y - 40, '💬', {
+      fontSize: '13px',
+    }).setOrigin(0.5, 1).setDepth(3).setVisible(this._chatBusy.has(username));
+
+    this.minimapCam.ignore([driver, body, shirt, shoes, pants, nameTag, chatBubble]);
 
     this._otherPlayers.set(username, {
-      sprite, nameTag,
-      facing: data.facing || 'down',
+      driver, body, shirt, shoes, pants, nameTag, chatBubble,
+      facing,
       lastUpdate: Date.now(),
     });
+  }
+
+  // ── SOC-001 Chat helpers ──────────────────────────────────────────────────
+
+  _showPlayerMenu(username, screenX, screenY) {
+    this._hidePlayerMenu();
+
+    const menu = document.createElement('div');
+    menu.id = 'player-menu';
+    Object.assign(menu.style, {
+      position: 'fixed', left: `${screenX + 12}px`, top: `${screenY - 8}px`,
+      background: '#0d0d20', border: '1px solid #3a3a6a', borderRadius: '6px',
+      fontFamily: 'Courier New', fontSize: '13px', zIndex: 1030,
+      minWidth: '130px', overflow: 'hidden', boxShadow: '0 4px 12px #000a',
+    });
+
+    // Header — player name
+    const header = document.createElement('div');
+    header.textContent = username;
+    Object.assign(header.style, {
+      padding: '6px 12px', color: '#88ccff',
+      borderBottom: '1px solid #2a2a4a', fontSize: '11px',
+    });
+    menu.appendChild(header);
+
+    // Chat button
+    const chatDisabled = this._chatOpen || this._chatBusy.has(username);
+    const chatBtn = document.createElement('button');
+    chatBtn.textContent = '💬 Chat';
+    chatBtn.disabled = chatDisabled;
+    Object.assign(chatBtn.style, {
+      display: 'block', width: '100%', padding: '8px 12px',
+      background: 'none', border: 'none', textAlign: 'left',
+      fontFamily: 'Courier New', fontSize: '13px',
+      color: chatDisabled ? '#444' : '#ccc',
+      cursor: chatDisabled ? 'not-allowed' : 'pointer',
+    });
+    if (!chatDisabled) {
+      chatBtn.onmouseover = () => { chatBtn.style.background = '#1a1a3a'; };
+      chatBtn.onmouseout  = () => { chatBtn.style.background = 'none'; };
+      chatBtn.onclick = () => { this._hidePlayerMenu(); this._sendChatRequest(username); };
+    }
+    menu.appendChild(chatBtn);
+
+    document.body.appendChild(menu);
+
+    // Dismiss when clicking outside the menu
+    const onDown = (e) => {
+      if (!menu.contains(e.target)) {
+        this._hidePlayerMenu();
+        document.removeEventListener('mousedown', onDown);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+  }
+
+  _hidePlayerMenu() {
+    const el = document.getElementById('player-menu');
+    if (el) el.remove();
+  }
+
+  _sendChatRequest(toUsername) {
+    if (this._chatBusy.has(toUsername)) {
+      const note = document.createElement('div');
+      note.textContent = `${toUsername} is busy chatting.`;
+      Object.assign(note.style, {
+        position: 'fixed', top: '50%', left: '50%',
+        transform: 'translate(-50%,-50%)',
+        background: '#111a', color: '#ff8866',
+        fontFamily: 'Courier New', fontSize: '14px',
+        padding: '12px 20px', borderRadius: '6px',
+        border: '1px solid #ff886688', zIndex: 1000,
+      });
+      document.body.appendChild(note);
+      setTimeout(() => note.remove(), 2000);
+      return;
+    }
+    window.socket.emit('chat_request', { to: toUsername });
+    const note = document.createElement('div');
+    note.id = 'chat-request-sent';
+    note.textContent = `Chat request sent to ${toUsername}…`;
+    Object.assign(note.style, {
+      position: 'fixed', top: '50%', left: '50%',
+      transform: 'translate(-50%,-50%)',
+      background: '#111a', color: '#ffd700',
+      fontFamily: 'Courier New', fontSize: '14px',
+      padding: '12px 20px', borderRadius: '6px',
+      border: '1px solid #ffd70088', zIndex: 1000,
+    });
+    document.body.appendChild(note);
+    setTimeout(() => note.remove(), 2500);
+  }
+
+  _showChatRequest(fromUsername) {
+    const el = document.createElement('div');
+    el.id = 'chat-incoming';
+    el.innerHTML = `<b>${fromUsername}</b> wants to talk.
+      <button id="chat-accept">Accept</button>
+      <button id="chat-decline">Decline</button>`;
+    Object.assign(el.style, {
+      position: 'fixed', top: '40%', left: '50%',
+      transform: 'translate(-50%,-50%)',
+      background: '#112', color: '#cce', padding: '16px 24px',
+      fontFamily: 'Courier New', fontSize: '14px',
+      border: '2px solid #5566aa', borderRadius: '8px', zIndex: 1010,
+      textAlign: 'center',
+    });
+    document.body.appendChild(el);
+
+    document.getElementById('chat-accept').onclick = () => {
+      el.remove();
+      window.socket.emit('chat_accept', { with: fromUsername });
+      // chat_started will fire for both parties
+    };
+    document.getElementById('chat-decline').onclick = () => el.remove();
+    setTimeout(() => { if (el.parentNode) el.remove(); }, 15000);
+  }
+
+  _openChat(partnerUsername) {
+    if (this._chatOpen) return;
+    this._chatOpen    = true;
+    this._chatPartner = partnerUsername;
+    this._chatMsgCount = 0;
+
+    const panel = document.createElement('div');
+    panel.id = 'chat-panel';
+    panel.innerHTML = `
+      <div id="chat-title">💬 ${partnerUsername}</div>
+      <div id="chat-log"></div>
+      <div id="chat-input-row">
+        <input id="chat-input" type="text" maxlength="200" placeholder="Type a message…"/>
+        <button id="chat-send">Send</button>
+        <button id="chat-x">✕</button>
+      </div>`;
+    Object.assign(panel.style, {
+      position: 'fixed', bottom: '80px', right: '20px',
+      width: '300px', background: '#0d0d20',
+      border: '2px solid #3a3a6a', borderRadius: '8px',
+      fontFamily: 'Courier New', fontSize: '13px',
+      color: '#ccc', zIndex: 1020, display: 'flex', flexDirection: 'column',
+    });
+    document.body.appendChild(panel);
+
+    // Restore previous messages with this partner
+    const history = this._chatHistory[partnerUsername] || [];
+    history.forEach(m => this._appendChatMessage(m.from, m.text, true));
+
+    const sendMsg = () => {
+      const inp = document.getElementById('chat-input');
+      const txt = inp.value.trim();
+      if (!txt) return;
+      inp.value = '';
+      window.socket.emit('chat_message', { to: partnerUsername, text: txt });
+      this._appendChatMessage('You', txt);
+      // Social fatigue: -1E per 10 messages sent
+      this._chatMsgCount++;
+      if (this._chatMsgCount % 10 === 0) GameState.addEnergy(-1);
+    };
+
+    document.getElementById('chat-send').onclick = sendMsg;
+    document.getElementById('chat-input').onkeydown = e => {
+      if (e.key === 'Enter') { e.preventDefault(); sendMsg(); }
+    };
+    document.getElementById('chat-x').onclick = () => this._closeChat(false);
+  }
+
+  _appendChatMessage(from, text, fromHistory = false) {
+    if (!fromHistory && this._chatPartner) {
+      if (!this._chatHistory[this._chatPartner]) this._chatHistory[this._chatPartner] = [];
+      this._chatHistory[this._chatPartner].push({ from, text });
+    }
+    const log = document.getElementById('chat-log');
+    if (!log) return;
+    const line = document.createElement('div');
+    line.innerHTML = `<span style="color:#88ccff">${from}:</span> ${text}`;
+    line.style.padding = '2px 0';
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  _closeChat(remote) {
+    if (!this._chatOpen) return;
+    if (!remote && this._chatPartner && window.socket) {
+      window.socket.emit('chat_close', { to: this._chatPartner });
+    }
+    this._chatOpen    = false;
+    this._chatPartner = null;
+    const panel = document.getElementById('chat-panel');
+    if (panel) panel.remove();
   }
 
   _moveOtherPlayer(username, x, y, facing) {
     const p = this._otherPlayers.get(username);
     if (!p) { this._addOtherPlayer(username, { x, y, facing }); return; }
 
-    p.sprite.setPosition(x, y);
+    p.driver.setPosition(x, y).anims.play(`walk-${facing}`, true);
+    p.body.setPosition(x, y);
+    p.shirt.setPosition(x, y);
+    p.shoes.setPosition(x, y);
+    p.pants.setPosition(x, y);
     p.nameTag.setPosition(x, y - 28);
+    p.chatBubble.setPosition(x, y - 40);
     p.facing     = facing;
     p.lastUpdate = Date.now();
-    p.sprite.anims.play(`walk-${facing}`, true);
   }
 
   _removeOtherPlayer(username) {
     const p = this._otherPlayers.get(username);
     if (!p) return;
-    p.sprite.destroy();
+    if (this._chatOpen && this._chatPartner === username) this._closeChat(true);
+    p.driver.destroy();
+    p.body.destroy();
+    p.shirt.destroy();
+    p.shoes.destroy();
+    p.pants.destroy();
     p.nameTag.destroy();
+    p.chatBubble.destroy();
     this._otherPlayers.delete(username);
   }
 
@@ -428,11 +757,50 @@ class GameScene extends Phaser.Scene {
     }
   }
 
+  _enterHome() {
+    this.homeActive = true;
+    this.homePrompt.setVisible(false);
+    this.player.setVelocity(0, 0);
+    GameState._restingAtHome = true;
+    document.getElementById('hud').style.display = 'none';
+    this._hidePlayerMenu();
+    this.scene.pause();
+    this.scene.launch('HomeScene');
+  }
+
+  _triggerFaint() {
+    // Prevent re-trigger while already at 0
+    GameState.energy = 1;
+    // Penalty: HP to 50%, lose 10% cash
+    GameState.hp = Math.floor(GameState.maxHp * 0.5);
+    const cashLost = Math.floor(GameState.money * 0.1);
+    GameState.addMoney(-cashLost);
+    GameState.addHp(0);   // emit hpChanged
+    // Teleport to home entrance (or spawn if home not yet placed)
+    const dest = this.homeEntrancePos || { x: 976, y: 976 };
+    this.player.setPosition(dest.x, dest.y);
+    // Show faint message briefly
+    const msg = this.add.text(this.scale.width / 2, this.scale.height / 2,
+      `You passed out!\n−$${cashLost} | HP → ${GameState.hp}`,
+      { fontFamily: 'Courier New', fontSize: '18px', color: '#ff4444',
+        stroke: '#000', strokeThickness: 3, align: 'center' }
+    ).setOrigin(0.5).setDepth(20).setScrollFactor(0);
+    this.time.delayedCall(2500, () => msg.destroy());
+    SaveManager.save();
+  }
+
+  _updateDayNight() {
+    if (!this.nightOverlay) return;
+    const isNight = GameState.hour >= 20 || GameState.hour < 7;
+    this.nightOverlay.setAlpha(isNight ? 0.3 : 0);
+  }
+
   _enterPizzeria() {
     this.pizzeriaActive = true;
     this.pizzeriaPrompt.setVisible(false);
     this.player.setVelocity(0, 0);
     document.getElementById('hud').style.display = 'none';
+    this._hidePlayerMenu();
     this.scene.pause();
     this.scene.launch('PizzeriaScene');
   }
@@ -442,6 +810,7 @@ class GameScene extends Phaser.Scene {
     this.casinoPrompt.setVisible(false);
     this.player.setVelocity(0, 0);
     document.getElementById('hud').style.display = 'none';
+    this._hidePlayerMenu();
     this.scene.pause();
     this.scene.launch('CasinoLobbyScene');
   }
@@ -466,7 +835,7 @@ class GameScene extends Phaser.Scene {
     const ap  = h < 12 ? 'AM' : 'PM';
     const h12 = h % 12 || 12;
     if (this.timeEl) this.timeEl.textContent = `${h12}:${String(m).padStart(2,'0')} ${ap}`;
-    if (this.dayEl)  this.dayEl.textContent  = `${GameState.dayName}${GameState.isWeekend ? ' ★' : ''}`;
+    if (this.dayEl)  this.dayEl.textContent  = `${GameState.dayName}, ${GameState.dateStr}${GameState.isWeekend ? ' ★' : ''}`;
     if (this.rankEl) this.rankEl.textContent = GameState.rankName;
   }
 }

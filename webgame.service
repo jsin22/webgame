@@ -1,0 +1,13 @@
+[Unit]
+Description=City RPG Game Server
+After=network.target
+
+[Service]
+WorkingDirectory=/home/jsin/dev/webgame
+ExecStart=python3 app.py --port 8080
+Restart=on-failure
+RestartSec=3
+User=jsin
+
+[Install]
+WantedBy=multi-user.target

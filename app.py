@@ -15,15 +15,41 @@ import argparse
 import base64
 import json
 import os
+import random
 import re
+import threading
+import time as _time
 
 from flask import Flask, send_from_directory, request
 from flask_socketio import SocketIO, emit
 
 # ── App setup ──────────────────────────────────────────────────────────────────
+import logging
+logging.getLogger('werkzeug').setLevel(logging.WARNING)
+
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading',
-                    allow_upgrades=False)
+                    allow_upgrades=False,
+                    ping_interval=10, ping_timeout=5)
+
+# ── World clock ────────────────────────────────────────────────────────────────
+# Single authoritative time for all players. Start state: Thursday July 6th = day 4.
+# 1 real second = 1 in-game minute.
+world_time: dict = {'hour': 8, 'minute': 0, 'day': 4}
+
+def _run_world_clock():
+    while True:
+        _time.sleep(1)
+        world_time['minute'] += 1
+        if world_time['minute'] >= 60:
+            world_time['minute'] = 0
+            world_time['hour'] += 1
+        if world_time['hour'] >= 24:
+            world_time['hour'] = 0
+            world_time['day'] += 1
+        socketio.emit('world_tick', dict(world_time))
+
+_clock_thread = threading.Thread(target=_run_world_clock, daemon=True)
 
 # ── Player store ───────────────────────────────────────────────────────────────
 # key (lowercase username) → full player record
@@ -74,7 +100,7 @@ def _finish_login(key: str):
     players[key]['sid'] = sid
 
     others = {
-        k: _public(p)
+        p.get('username', k): _public(p)
         for k, p in players.items()
         if k != key and 'sid' in p
     }
@@ -94,7 +120,10 @@ def index():
 
 @app.route('/<path:path>')
 def static_files(path):
-    return send_from_directory('.', path)
+    resp = send_from_directory('.', path)
+    if path.endswith(('.js', '.css', '.html')):
+        resp.headers['Cache-Control'] = 'no-cache, must-revalidate'
+    return resp
 
 
 # ── Socket events ──────────────────────────────────────────────────────────────
@@ -132,9 +161,10 @@ def handle_register(data):
 
     others = _finish_login(key)
     emit('register_success', {
-        'username': username,
-        'player':   _public(players[key]),
-        'others':   others,
+        'username':   username,
+        'player':     _public(players[key]),
+        'others':     others,
+        'world_time': dict(world_time),
     })
     emit('player_joined', {'username': username, 'player': _public(players[key])},
          broadcast=True, include_self=False)
@@ -167,9 +197,10 @@ def handle_login(data):
 
     others = _finish_login(key)
     emit('login_success', {
-        'username': rec.get('username', username),
-        'player':   _public(players[key]),
-        'others':   others,
+        'username':   rec.get('username', username),
+        'player':     _public(players[key]),
+        'others':     others,
+        'world_time': dict(world_time),
     })
     emit('player_joined', {'username': rec.get('username', username), 'player': _public(players[key])},
          broadcast=True, include_self=False)
@@ -194,11 +225,56 @@ def handle_move(data):
     }, broadcast=True, include_self=False)
 
 
+_GUEST_NAMES = [
+    'Shadow', 'Blaze', 'Pixel', 'Nova', 'Glitch', 'Cipher', 'Drift', 'Flare',
+    'Rogue', 'Jinx', 'Volt', 'Ace', 'Hex', 'Vex', 'Dash', 'Surge',
+]
+_PALETTES = [
+    '#d93030','#2855d4','#2a9040','#c4b020','#d46010',
+    '#7722bb','#cc5080','#6a3010','#1a1a1a','#d8d8d8',
+]
+
+@socketio.on('guest_login')
+def handle_guest_login():
+    """Create a temporary in-memory player that is never persisted."""
+    base = random.choice(_GUEST_NAMES)
+    suffix = random.randint(10, 99)
+    username = f'{base}{suffix}'
+    key = username.lower()
+    # Make sure the key is unique
+    while key in players:
+        suffix = random.randint(10, 99)
+        username = f'{base}{suffix}'
+        key = username.lower()
+
+    players[key] = {
+        **DEFAULT_PLAYER,
+        'username': username,
+        'gender': random.choice(['male', 'female']),
+        'colors': {
+            'shirt': random.choice(_PALETTES),
+            'pants': random.choice(_PALETTES),
+            'shoes': random.choice(_PALETTES),
+        },
+        'guest': True,
+    }
+    others = _finish_login(key)
+    emit('login_success', {
+        'username':   username,
+        'player':     _public(players[key]),
+        'others':     others,
+        'world_time': dict(world_time),
+    })
+    emit('player_joined', {'username': username, 'player': _public(players[key])},
+         broadcast=True, include_self=False)
+    print(f'[+] {username} joined as guest')
+
+
 @socketio.on('save_state')
 def handle_save_state(data):
     """Client emits this after earning/spending money or finishing a shift."""
     key = sid_to_key.get(request.sid)
-    if not key:
+    if not key or players.get(key, {}).get('guest'):
         return
 
     saveable = ('money', 'hp', 'energy', 'xp', 'jobRank',
@@ -209,17 +285,111 @@ def handle_save_state(data):
     _save()
 
 
+@socketio.on('chat_request')
+def handle_chat_request(data):
+    """Player A requests to chat with Player B."""
+    from_key = sid_to_key.get(request.sid)
+    if not from_key:
+        return
+    if players[from_key].get('in_chat'):
+        return
+    to_key = str(data.get('to', '')).lower()
+    target = players.get(to_key)
+    if not target or 'sid' not in target:
+        emit('chat_error', {'error': 'Player is not online.'})
+        return
+    if target.get('in_chat'):
+        emit('chat_error', {'error': f'{target.get("username", to_key)} is busy chatting.'})
+        return
+    from_name = players[from_key].get('username', from_key)
+    socketio.emit('chat_incoming', {'from': from_name}, to=target['sid'])
+
+
+@socketio.on('chat_accept')
+def handle_chat_accept(data):
+    """Target accepts a chat request — notify both parties."""
+    acceptor_key = sid_to_key.get(request.sid)
+    if not acceptor_key:
+        return
+    requester_key = str(data.get('with', '')).lower()
+    requester = players.get(requester_key)
+    if not requester or 'sid' not in requester:
+        return
+    acceptor_name  = players[acceptor_key].get('username', acceptor_key)
+    requester_name = requester.get('username', requester_key)
+    # Mark both as in chat
+    players[acceptor_key]['in_chat'] = True
+    players[acceptor_key]['in_chat_with'] = requester_key
+    requester['in_chat'] = True
+    requester['in_chat_with'] = acceptor_key
+    socketio.emit('chat_started', {'with': acceptor_name},  to=requester['sid'])
+    socketio.emit('chat_started', {'with': requester_name}, to=request.sid)
+    socketio.emit('chat_status', {'username': acceptor_name,  'busy': True})
+    socketio.emit('chat_status', {'username': requester_name, 'busy': True})
+
+
+@socketio.on('chat_message')
+def handle_chat_message(data):
+    """Relay a chat message to the target player."""
+    from_key = sid_to_key.get(request.sid)
+    if not from_key:
+        return
+    to_key = str(data.get('to', '')).lower()
+    target = players.get(to_key)
+    if not target or 'sid' not in target:
+        return
+    from_name = players[from_key].get('username', from_key)
+    socketio.emit('chat_message', {'from': from_name, 'text': str(data.get('text', ''))[:200]},
+                  to=target['sid'])
+
+
+@socketio.on('chat_close')
+def handle_chat_close(data):
+    """Notify the other party that chat was closed."""
+    from_key = sid_to_key.get(request.sid)
+    if not from_key:
+        return
+    from_name = players[from_key].get('username', from_key)
+    players[from_key]['in_chat'] = False
+    players[from_key]['in_chat_with'] = None
+    socketio.emit('chat_status', {'username': from_name, 'busy': False})
+    to_key = str(data.get('to', '')).lower()
+    target = players.get(to_key)
+    if target:
+        target['in_chat'] = False
+        target['in_chat_with'] = None
+        target_name = target.get('username', to_key)
+        socketio.emit('chat_status', {'username': target_name, 'busy': False})
+        if 'sid' in target:
+            socketio.emit('chat_closed', {}, to=target['sid'])
+
+
 @socketio.on('disconnect')
 def handle_disconnect():
     key = sid_to_key.pop(request.sid, None)
     if not key:
         return
-    username = players[key].get('username', key) if key in players else key
-    if key in players:
+    rec      = players.get(key, {})
+    username = rec.get('username', key)
+    is_guest = rec.get('guest', False)
+    # If disconnecting player was in chat, notify and clear their partner
+    partner_key = rec.get('in_chat_with')
+    if partner_key and partner_key in players:
+        players[partner_key]['in_chat'] = False
+        players[partner_key]['in_chat_with'] = None
+        partner_name = players[partner_key].get('username', partner_key)
+        socketio.emit('chat_status', {'username': partner_name, 'busy': False})
+        if 'sid' in players[partner_key]:
+            socketio.emit('chat_closed', {}, to=players[partner_key]['sid'])
+    if rec.get('in_chat'):
+        socketio.emit('chat_status', {'username': username, 'busy': False})
+    if is_guest:
+        players.pop(key, None)   # discard guest — never persisted
+    elif key in players:
         players[key].pop('sid', None)
-    _save()
+        _save()
     emit('player_left', {'username': username}, broadcast=True)
-    print(f'[-] {username} disconnected')
+    print(f'[-] {username} disconnected{"  (guest)" if is_guest else ""}')
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
@@ -230,4 +400,5 @@ if __name__ == '__main__':
 
     print(f'City RPG server running on http://0.0.0.0:{args.port}')
     print('To share with a friend: ngrok http {port}'.format(port=args.port))
+    _clock_thread.start()
     socketio.run(app, host='0.0.0.0', port=args.port, allow_unsafe_werkzeug=True)

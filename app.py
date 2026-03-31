@@ -15,6 +15,7 @@ import argparse
 import base64
 import json
 import os
+import random
 import re
 import threading
 import time as _time
@@ -220,11 +221,39 @@ def handle_move(data):
     }, broadcast=True, include_self=False)
 
 
+_GUEST_NAMES = [
+    'Shadow', 'Blaze', 'Pixel', 'Nova', 'Glitch', 'Cipher', 'Drift', 'Flare',
+    'Rogue', 'Jinx', 'Volt', 'Ace', 'Hex', 'Vex', 'Dash', 'Surge',
+]
+
+@socketio.on('guest_login')
+def handle_guest_login():
+    """Create a temporary in-memory player that is never persisted."""
+    base = random.choice(_GUEST_NAMES)
+    suffix = random.randint(10, 99)
+    username = f'{base}{suffix}'
+    key = f'guest_{username.lower()}'
+    # Make sure the key is unique
+    while key in players:
+        suffix = random.randint(10, 99)
+        username = f'{base}{suffix}'
+        key = f'guest_{username.lower()}'
+
+    players[key] = {
+        **DEFAULT_PLAYER,
+        'username': username,
+        'gender': 'male',
+        'colors': {'shirt': '#2855d4', 'pants': '#1a1a1a', 'shoes': '#6a3010'},
+        'guest': True,
+    }
+    _finish_login(key)
+
+
 @socketio.on('save_state')
 def handle_save_state(data):
     """Client emits this after earning/spending money or finishing a shift."""
     key = sid_to_key.get(request.sid)
-    if not key:
+    if not key or players.get(key, {}).get('guest'):
         return
 
     saveable = ('money', 'hp', 'energy', 'xp', 'jobRank',
@@ -247,7 +276,7 @@ def handle_chat_request(data):
         emit('chat_error', {'error': 'Player is not online.'})
         return
     from_name = players[from_key].get('username', from_key)
-    emit('chat_incoming', {'from': from_name}, to=target['sid'])
+    socketio.emit('chat_incoming', {'from': from_name}, to=target['sid'])
 
 
 @socketio.on('chat_accept')
@@ -262,8 +291,8 @@ def handle_chat_accept(data):
         return
     acceptor_name  = players[acceptor_key].get('username', acceptor_key)
     requester_name = requester.get('username', requester_key)
-    emit('chat_started', {'with': acceptor_name},  to=requester['sid'])
-    emit('chat_started', {'with': requester_name}, to=request.sid)
+    socketio.emit('chat_started', {'with': acceptor_name},  to=requester['sid'])
+    socketio.emit('chat_started', {'with': requester_name}, to=request.sid)
 
 
 @socketio.on('chat_message')
@@ -277,9 +306,8 @@ def handle_chat_message(data):
     if not target or 'sid' not in target:
         return
     from_name = players[from_key].get('username', from_key)
-    emit('chat_message', {'from': from_name, 'text': str(data.get('text', ''))[:200]},
-         to=target['sid'])
-    emit('chat_message', {'from': from_name, 'text': str(data.get('text', ''))[:200]})
+    socketio.emit('chat_message', {'from': from_name, 'text': str(data.get('text', ''))[:200]},
+                  to=target['sid'])
 
 
 @socketio.on('chat_close')
@@ -291,7 +319,7 @@ def handle_chat_close(data):
     to_key = str(data.get('to', '')).lower()
     target = players.get(to_key)
     if target and 'sid' in target:
-        emit('chat_closed', {}, to=target['sid'])
+        socketio.emit('chat_closed', {}, to=target['sid'])
 
 
 @socketio.on('disconnect')
@@ -300,11 +328,14 @@ def handle_disconnect():
     if not key:
         return
     username = players[key].get('username', key) if key in players else key
-    if key in players:
+    is_guest = players.get(key, {}).get('guest', False)
+    if is_guest:
+        players.pop(key, None)   # discard guest — never persisted
+    elif key in players:
         players[key].pop('sid', None)
-    _save()
+        _save()
     emit('player_left', {'username': username}, broadcast=True)
-    print(f'[-] {username} disconnected')
+    print(f'[-] {username} disconnected{"  (guest)" if is_guest else ""}')
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

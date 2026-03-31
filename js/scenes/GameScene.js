@@ -115,6 +115,19 @@ class GameScene extends Phaser.Scene {
       if (blocked.includes(e.key)) e.preventDefault();
     });
 
+    // Disable Phaser keyboard input while any DOM text input is focused
+    this.input.keyboard.enableGlobalCapture();
+    document.addEventListener('focusin',  e => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        this.input.keyboard.disableGlobalCapture();
+      }
+    });
+    document.addEventListener('focusout', e => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        this.input.keyboard.enableGlobalCapture();
+      }
+    });
+
     // ── Minimap (second camera) ───────────────────────────────────────────────
     const mSize = 120;
     const pad   = 12;

@@ -246,7 +246,16 @@ def handle_guest_login():
         'colors': {'shirt': '#2855d4', 'pants': '#1a1a1a', 'shoes': '#6a3010'},
         'guest': True,
     }
-    _finish_login(key)
+    others = _finish_login(key)
+    emit('login_success', {
+        'username':   username,
+        'player':     _public(players[key]),
+        'others':     others,
+        'world_time': dict(world_time),
+    })
+    emit('player_joined', {'username': username, 'player': _public(players[key])},
+         broadcast=True, include_self=False)
+    print(f'[+] {username} joined as guest')
 
 
 @socketio.on('save_state')

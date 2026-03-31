@@ -109,8 +109,11 @@ class GameScene extends Phaser.Scene {
       d:     Phaser.Input.Keyboard.KeyCodes.D,
     });
 
-    // Prevent arrow keys from scrolling the browser page
+    // Prevent arrow keys / space from scrolling the browser page,
+    // but only when no text input is focused.
     this.input.keyboard.on('keydown', e => {
+      const el = document.activeElement;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return;
       const blocked = ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '];
       if (blocked.includes(e.key)) e.preventDefault();
     });
@@ -298,10 +301,14 @@ class GameScene extends Phaser.Scene {
     const SPEED = GameState.energy <= 10 ? 80 : 160;
     const k     = this.inputKeys;
 
-    const goLeft  = k.left.isDown  || k.a.isDown;
-    const goRight = k.right.isDown || k.d.isDown;
-    const goUp    = k.up.isDown    || k.w.isDown;
-    const goDown  = k.down.isDown  || k.s.isDown;
+    // Don't read game keys while a DOM text input has focus
+    const _ae = document.activeElement;
+    const inputFocused = _ae && (_ae.tagName === 'INPUT' || _ae.tagName === 'TEXTAREA');
+
+    const goLeft  = !inputFocused && (k.left.isDown  || k.a.isDown);
+    const goRight = !inputFocused && (k.right.isDown || k.d.isDown);
+    const goUp    = !inputFocused && (k.up.isDown    || k.w.isDown);
+    const goDown  = !inputFocused && (k.down.isDown  || k.s.isDown);
 
     let vx = 0, vy = 0;
     if (goLeft)  vx -= SPEED;
@@ -401,11 +408,16 @@ class GameScene extends Phaser.Scene {
         });
       }
 
-      // Switch other players to idle when they haven't moved recently
+      // Sync remote player visual layers to their driver animation each frame
       this._otherPlayers.forEach(p => {
         if (Date.now() - p.lastUpdate > 150) {
-          p.sprite.anims.play(`idle-${p.facing}`, true);
+          p.driver.anims.play(`idle-${p.facing}`, true);
         }
+        const fi = p.driver.frame.name;
+        p.body.setFrame(fi);
+        p.shirt.setFrame(fi);
+        p.pants.setFrame(fi);
+        p.shoes.setFrame(fi);
       });
     }
   }
@@ -432,6 +444,8 @@ class GameScene extends Phaser.Scene {
     if (data.world_time) GameState.syncWorldTime(data.world_time);
     this._updateDayNight();
     this._refreshHUD();
+
+    this._chatHistory = {};  // partnerUsername → [{from, text}, ...]
 
     // Render players already online
     Object.entries(others || {}).forEach(([uname, pdata]) => {
@@ -471,26 +485,39 @@ class GameScene extends Phaser.Scene {
   _addOtherPlayer(username, data) {
     if (this._otherPlayers.has(username)) return;
 
-    const sprite = this.add.sprite(data.x, data.y, 'player', 0);
-    sprite.setDepth(2).setTint(0xaaddff);  // blue tint distinguishes remote players
-    sprite.anims.play(`idle-${data.facing || 'down'}`, true);
-    // SOC-001: clicking another player opens a chat request
-    sprite.setInteractive({ useHandCursor: true });
-    sprite.on('pointerup', () => {
+    const x = data.x || 0, y = data.y || 0;
+    const facing = data.facing || 'down';
+    const t = hex => parseInt((hex || '#ffffff').replace('#', ''), 16);
+    const colors = data.colors || {};
+    const bodyKey = data.gender === 'female' ? 'player_body_female' : 'player_body_male';
+
+    // Invisible driver sprite — owns the animation state
+    const driver = this.add.sprite(x, y, 'player', 0).setAlpha(0);
+    driver.anims.play(`idle-${facing}`, true);
+
+    // Visual layers (same depth order as local player)
+    const body  = this.add.sprite(x, y, bodyKey,        0).setDepth(2.0);
+    const shirt = this.add.sprite(x, y, 'player_shirt', 0).setDepth(2.2).setTint(t(colors.shirt || '#2855d4'));
+    const shoes = this.add.sprite(x, y, 'player_shoes', 0).setDepth(2.1).setTint(t(colors.shoes || '#6a3010'));
+    const pants = this.add.sprite(x, y, 'player_pants', 0).setDepth(2.3).setTint(t(colors.pants || '#1a1a1a'));
+
+    // Clickable hit area on the body sprite for chat requests
+    body.setInteractive({ useHandCursor: true });
+    body.on('pointerup', () => {
       if (!this._chatOpen) this._sendChatRequest(username);
     });
 
-    const nameTag = this.add.text(data.x, data.y - 28, data.username || username, {
+    const displayName = data.username || username;
+    const nameTag = this.add.text(x, y - 28, displayName, {
       fontFamily: 'Courier New', fontSize: '10px',
       color: '#88ccff', stroke: '#000000', strokeThickness: 3,
     }).setOrigin(0.5, 1).setDepth(3);
 
-    // Hide name tags from the minimap
-    this.minimapCam.ignore(nameTag);
+    this.minimapCam.ignore([driver, body, shirt, shoes, pants, nameTag]);
 
     this._otherPlayers.set(username, {
-      sprite, nameTag,
-      facing: data.facing || 'down',
+      driver, body, shirt, shoes, pants, nameTag,
+      facing,
       lastUpdate: Date.now(),
     });
   }
@@ -564,6 +591,10 @@ class GameScene extends Phaser.Scene {
     });
     document.body.appendChild(panel);
 
+    // Restore previous messages with this partner
+    const history = this._chatHistory[partnerUsername] || [];
+    history.forEach(m => this._appendChatMessage(m.from, m.text, true));
+
     const sendMsg = () => {
       const inp = document.getElementById('chat-input');
       const txt = inp.value.trim();
@@ -583,7 +614,11 @@ class GameScene extends Phaser.Scene {
     document.getElementById('chat-x').onclick = () => this._closeChat(false);
   }
 
-  _appendChatMessage(from, text) {
+  _appendChatMessage(from, text, fromHistory = false) {
+    if (!fromHistory && this._chatPartner) {
+      if (!this._chatHistory[this._chatPartner]) this._chatHistory[this._chatPartner] = [];
+      this._chatHistory[this._chatPartner].push({ from, text });
+    }
     const log = document.getElementById('chat-log');
     if (!log) return;
     const line = document.createElement('div');
@@ -608,17 +643,24 @@ class GameScene extends Phaser.Scene {
     const p = this._otherPlayers.get(username);
     if (!p) { this._addOtherPlayer(username, { x, y, facing }); return; }
 
-    p.sprite.setPosition(x, y);
+    p.driver.setPosition(x, y).anims.play(`walk-${facing}`, true);
+    p.body.setPosition(x, y);
+    p.shirt.setPosition(x, y);
+    p.shoes.setPosition(x, y);
+    p.pants.setPosition(x, y);
     p.nameTag.setPosition(x, y - 28);
     p.facing     = facing;
     p.lastUpdate = Date.now();
-    p.sprite.anims.play(`walk-${facing}`, true);
   }
 
   _removeOtherPlayer(username) {
     const p = this._otherPlayers.get(username);
     if (!p) return;
-    p.sprite.destroy();
+    p.driver.destroy();
+    p.body.destroy();
+    p.shirt.destroy();
+    p.shoes.destroy();
+    p.pants.destroy();
     p.nameTag.destroy();
     this._otherPlayers.delete(username);
   }

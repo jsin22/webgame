@@ -225,6 +225,10 @@ _GUEST_NAMES = [
     'Shadow', 'Blaze', 'Pixel', 'Nova', 'Glitch', 'Cipher', 'Drift', 'Flare',
     'Rogue', 'Jinx', 'Volt', 'Ace', 'Hex', 'Vex', 'Dash', 'Surge',
 ]
+_PALETTES = [
+    '#d93030','#2855d4','#2a9040','#c4b020','#d46010',
+    '#7722bb','#cc5080','#6a3010','#1a1a1a','#d8d8d8',
+]
 
 @socketio.on('guest_login')
 def handle_guest_login():
@@ -242,8 +246,12 @@ def handle_guest_login():
     players[key] = {
         **DEFAULT_PLAYER,
         'username': username,
-        'gender': 'male',
-        'colors': {'shirt': '#2855d4', 'pants': '#1a1a1a', 'shoes': '#6a3010'},
+        'gender': random.choice(['male', 'female']),
+        'colors': {
+            'shirt': random.choice(_PALETTES),
+            'pants': random.choice(_PALETTES),
+            'shoes': random.choice(_PALETTES),
+        },
         'guest': True,
     }
     others = _finish_login(key)
@@ -279,10 +287,15 @@ def handle_chat_request(data):
     from_key = sid_to_key.get(request.sid)
     if not from_key:
         return
+    if players[from_key].get('in_chat'):
+        return
     to_key = str(data.get('to', '')).lower()
     target = players.get(to_key)
     if not target or 'sid' not in target:
         emit('chat_error', {'error': 'Player is not online.'})
+        return
+    if target.get('in_chat'):
+        emit('chat_error', {'error': f'{target.get("username", to_key)} is busy chatting.'})
         return
     from_name = players[from_key].get('username', from_key)
     socketio.emit('chat_incoming', {'from': from_name}, to=target['sid'])
@@ -300,8 +313,15 @@ def handle_chat_accept(data):
         return
     acceptor_name  = players[acceptor_key].get('username', acceptor_key)
     requester_name = requester.get('username', requester_key)
+    # Mark both as in chat
+    players[acceptor_key]['in_chat'] = True
+    players[acceptor_key]['in_chat_with'] = requester_key
+    requester['in_chat'] = True
+    requester['in_chat_with'] = acceptor_key
     socketio.emit('chat_started', {'with': acceptor_name},  to=requester['sid'])
     socketio.emit('chat_started', {'with': requester_name}, to=request.sid)
+    socketio.emit('chat_status', {'username': acceptor_name,  'busy': True})
+    socketio.emit('chat_status', {'username': requester_name, 'busy': True})
 
 
 @socketio.on('chat_message')
@@ -325,10 +345,19 @@ def handle_chat_close(data):
     from_key = sid_to_key.get(request.sid)
     if not from_key:
         return
+    from_name = players[from_key].get('username', from_key)
+    players[from_key]['in_chat'] = False
+    players[from_key]['in_chat_with'] = None
+    socketio.emit('chat_status', {'username': from_name, 'busy': False})
     to_key = str(data.get('to', '')).lower()
     target = players.get(to_key)
-    if target and 'sid' in target:
-        socketio.emit('chat_closed', {}, to=target['sid'])
+    if target:
+        target['in_chat'] = False
+        target['in_chat_with'] = None
+        target_name = target.get('username', to_key)
+        socketio.emit('chat_status', {'username': target_name, 'busy': False})
+        if 'sid' in target:
+            socketio.emit('chat_closed', {}, to=target['sid'])
 
 
 @socketio.on('disconnect')
@@ -336,8 +365,20 @@ def handle_disconnect():
     key = sid_to_key.pop(request.sid, None)
     if not key:
         return
-    username = players[key].get('username', key) if key in players else key
-    is_guest = players.get(key, {}).get('guest', False)
+    rec      = players.get(key, {})
+    username = rec.get('username', key)
+    is_guest = rec.get('guest', False)
+    # If disconnecting player was in chat, notify and clear their partner
+    partner_key = rec.get('in_chat_with')
+    if partner_key and partner_key in players:
+        players[partner_key]['in_chat'] = False
+        players[partner_key]['in_chat_with'] = None
+        partner_name = players[partner_key].get('username', partner_key)
+        socketio.emit('chat_status', {'username': partner_name, 'busy': False})
+        if 'sid' in players[partner_key]:
+            socketio.emit('chat_closed', {}, to=players[partner_key]['sid'])
+    if rec.get('in_chat'):
+        socketio.emit('chat_status', {'username': username, 'busy': False})
     if is_guest:
         players.pop(key, None)   # discard guest — never persisted
     elif key in players:

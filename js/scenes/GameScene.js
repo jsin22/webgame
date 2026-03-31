@@ -301,9 +301,12 @@ class GameScene extends Phaser.Scene {
     const SPEED = GameState.energy <= 10 ? 80 : 160;
     const k     = this.inputKeys;
 
-    // Don't read game keys while a DOM text input has focus
+    // Don't read game keys while a DOM text input has focus,
+    // EXCEPT the chat input — player should still be able to move while chatting.
     const _ae = document.activeElement;
-    const inputFocused = _ae && (_ae.tagName === 'INPUT' || _ae.tagName === 'TEXTAREA');
+    const inputFocused = _ae &&
+      (_ae.tagName === 'INPUT' || _ae.tagName === 'TEXTAREA') &&
+      _ae.id !== 'chat-input';
 
     const goLeft  = !inputFocused && (k.left.isDown  || k.a.isDown);
     const goRight = !inputFocused && (k.right.isDown || k.d.isDown);
@@ -446,6 +449,7 @@ class GameScene extends Phaser.Scene {
     this._refreshHUD();
 
     this._chatHistory = {};  // partnerUsername → [{from, text}, ...]
+    this._chatBusy    = new Set(); // usernames currently in a chat session
 
     // Render players already online
     Object.entries(others || {}).forEach(([uname, pdata]) => {
@@ -480,6 +484,13 @@ class GameScene extends Phaser.Scene {
     socket.on('chat_closed', () => {
       this._closeChat(true);
     });
+
+    socket.on('chat_status', ({ username, busy }) => {
+      if (busy) this._chatBusy.add(username);
+      else      this._chatBusy.delete(username);
+      const p = this._otherPlayers.get(username);
+      if (p) p.chatBubble.setVisible(busy);
+    });
   }
 
   _addOtherPlayer(username, data) {
@@ -513,10 +524,14 @@ class GameScene extends Phaser.Scene {
       color: '#88ccff', stroke: '#000000', strokeThickness: 3,
     }).setOrigin(0.5, 1).setDepth(3);
 
-    this.minimapCam.ignore([driver, body, shirt, shoes, pants, nameTag]);
+    const chatBubble = this.add.text(x, y - 40, '💬', {
+      fontSize: '13px',
+    }).setOrigin(0.5, 1).setDepth(3).setVisible(this._chatBusy.has(username));
+
+    this.minimapCam.ignore([driver, body, shirt, shoes, pants, nameTag, chatBubble]);
 
     this._otherPlayers.set(username, {
-      driver, body, shirt, shoes, pants, nameTag,
+      driver, body, shirt, shoes, pants, nameTag, chatBubble,
       facing,
       lastUpdate: Date.now(),
     });
@@ -525,6 +540,21 @@ class GameScene extends Phaser.Scene {
   // ── SOC-001 Chat helpers ──────────────────────────────────────────────────
 
   _sendChatRequest(toUsername) {
+    if (this._chatBusy.has(toUsername)) {
+      const note = document.createElement('div');
+      note.textContent = `${toUsername} is busy chatting.`;
+      Object.assign(note.style, {
+        position: 'fixed', top: '50%', left: '50%',
+        transform: 'translate(-50%,-50%)',
+        background: '#111a', color: '#ff8866',
+        fontFamily: 'Courier New', fontSize: '14px',
+        padding: '12px 20px', borderRadius: '6px',
+        border: '1px solid #ff886688', zIndex: 1000,
+      });
+      document.body.appendChild(note);
+      setTimeout(() => note.remove(), 2000);
+      return;
+    }
     window.socket.emit('chat_request', { to: toUsername });
     const note = document.createElement('div');
     note.id = 'chat-request-sent';
@@ -649,6 +679,7 @@ class GameScene extends Phaser.Scene {
     p.shoes.setPosition(x, y);
     p.pants.setPosition(x, y);
     p.nameTag.setPosition(x, y - 28);
+    p.chatBubble.setPosition(x, y - 40);
     p.facing     = facing;
     p.lastUpdate = Date.now();
   }
@@ -656,12 +687,14 @@ class GameScene extends Phaser.Scene {
   _removeOtherPlayer(username) {
     const p = this._otherPlayers.get(username);
     if (!p) return;
+    if (this._chatOpen && this._chatPartner === username) this._closeChat(true);
     p.driver.destroy();
     p.body.destroy();
     p.shirt.destroy();
     p.shoes.destroy();
     p.pants.destroy();
     p.nameTag.destroy();
+    p.chatBubble.destroy();
     this._otherPlayers.delete(username);
   }
 

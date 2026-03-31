@@ -480,7 +480,7 @@ class GameScene extends Phaser.Scene {
       if (!this._chatOpen) this._sendChatRequest(username);
     });
 
-    const nameTag = this.add.text(data.x, data.y - 28, username, {
+    const nameTag = this.add.text(data.x, data.y - 28, data.username || username, {
       fontFamily: 'Courier New', fontSize: '10px',
       color: '#88ccff', stroke: '#000000', strokeThickness: 3,
     }).setOrigin(0.5, 1).setDepth(3);

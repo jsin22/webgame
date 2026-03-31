@@ -96,7 +96,7 @@ def _finish_login(key: str):
     players[key]['sid'] = sid
 
     others = {
-        k: _public(p)
+        p.get('username', k): _public(p)
         for k, p in players.items()
         if k != key and 'sid' in p
     }
@@ -232,12 +232,12 @@ def handle_guest_login():
     base = random.choice(_GUEST_NAMES)
     suffix = random.randint(10, 99)
     username = f'{base}{suffix}'
-    key = f'guest_{username.lower()}'
+    key = username.lower()
     # Make sure the key is unique
     while key in players:
         suffix = random.randint(10, 99)
         username = f'{base}{suffix}'
-        key = f'guest_{username.lower()}'
+        key = username.lower()
 
     players[key] = {
         **DEFAULT_PLAYER,

@@ -1,0 +1,2 @@
+- make the animation more of a crossover go from side to side, the duration of the move should only last a short period of time so the user has to hit it at the right time
+- after each successful shot the obstacles should appear more frequently and randomly

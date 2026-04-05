@@ -41,7 +41,8 @@ class BasketballScene extends Phaser.Scene {
     this.RX           = W / 2;                   // rim x
     this.RY           = 152;                     // rim y (high above defender)
     this.PLY          = 454;                     // player sprite center y
-    this.PLAYER_SCALE = 1.3;                     // player sprite scale
+    this.PLAYER_SCALE = 1.55;                    // player sprite scale
+    this.DEF_SCALE    = 0.75;                    // defender draw scale multiplier
 
     // Match
     this.playerScore = 0;
@@ -293,7 +294,7 @@ class BasketballScene extends Phaser.Scene {
     if (this.state === 'menu') return;
 
     const y  = this._defPos.y;
-    const sc = this.perspScale(y);
+    const sc = this.perspScale(y) * this.DEF_SCALE;
     const s  = v => v * sc;
 
     // ── Visual states ───────────────────────────────────────────────────────────
@@ -434,9 +435,15 @@ class BasketballScene extends Phaser.Scene {
       fontFamily: 'Courier New', fontSize: '11px', color: '#445566',
     }).setOrigin(0.5).setScrollFactor(sf).setDepth(d);
 
-    this._opennessText = this.add.text(W - 90, H - 16, '', {
-      fontFamily: 'Courier New', fontSize: '10px', color: '#445566',
-    }).setOrigin(0.5).setScrollFactor(sf).setDepth(d);
+    // Openness indicator — prominent bar + label on left side
+    this._opennessBg   = this.add.rectangle(54, H / 2, 108, 26, 0x000000, 0.70)
+      .setScrollFactor(sf).setDepth(d).setVisible(false);
+    this._opennessBar  = this.add.rectangle(6, H / 2, 2, 20, 0x55ff88)
+      .setScrollFactor(sf).setDepth(d + 1).setOrigin(0, 0.5).setVisible(false);
+    this._opennessText = this.add.text(54, H / 2, '', {
+      fontFamily: 'Courier New', fontSize: '15px', color: '#55ff88',
+      stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(d + 2);
 
     // STEAL! flash (offense — defender lunging)
     this._stealWarnText = this.add.text(W / 2, H / 2 + 45, 'STEAL!', {
@@ -464,17 +471,24 @@ class BasketballScene extends Phaser.Scene {
 
   _updateHUD() {
     const opp  = BB_OPPONENTS[Math.min(_BB.level, BB_OPPONENTS.length - 1)];
-    this._pScoreText.setText(`YOU: ${this.playerScore}`);
-    this._aScoreText.setText(`CPU: ${this.aiScore}`);
-    this._oppText.setText(`${opp.name}  ·  Lv ${_BB.level + 1}  ·  First to ${BB_WIN}`);
-    this._possText.setText(this.possession === 'player' ? '▶ YOUR BALL' : '▶ CPU BALL');
+    this._pScoreText.setText(`SCORE: ${this.playerScore}`);
+    this._aScoreText.setText(`GOAL: ${BB_WIN}`);
+    this._oppText.setText(`${opp.name}  ·  Lv ${_BB.level + 1}`);
+    this._possText.setText('▶ YOUR BALL');
 
-    if (this.state === 'offense') {
-      const pct = Math.round(this.openness * 100);
-      const col = pct >= 60 ? '#55ff88' : pct >= 40 ? '#ffdd44' : '#ff8844';
-      this._opennessText.setText(`Open: ${pct}%`).setColor(col);
+    if (this.state === 'offense' || this.state === 'shot_arc') {
+      const pct    = Math.round(this.openness * 100);
+      const col    = pct >= 60 ? '#55ff88' : pct >= 40 ? '#ffdd44' : '#ff5533';
+      const label  = pct >= 60 ? 'OPEN!' : pct >= 40 ? 'CONTESTED' : 'COVERED';
+      const barW   = Math.round(this.openness * 96);
+      const barCol = pct >= 60 ? 0x33dd66 : pct >= 40 ? 0xddcc00 : 0xdd3311;
+      this._opennessBg.setVisible(true);
+      this._opennessBar.setVisible(true).setSize(Math.max(2, barW), 20).fillColor = barCol;
+      this._opennessText.setText(`${pct}%  ${label}`).setColor(col).setVisible(true);
     } else {
-      this._opennessText.setText('');
+      this._opennessBg.setVisible(false);
+      this._opennessBar.setVisible(false);
+      this._opennessText.setVisible(false);
     }
   }
 
@@ -580,12 +594,13 @@ class BasketballScene extends Phaser.Scene {
     if (spin)           { this._spinActive = true;        this._spinTimer = 0.60; }
     this._resetNextStealTimer();
 
-    // Defender stumbles sideways (opposite crossover dir) and retreats on Z-axis.
-    // Recovery is handled by the logic loop once _pastDefender expires.
+    // Player lunges past the defender — advance depth forward visually.
+    // Defender stumbles a short distance to the side; recovery via logic loop.
+    this._playerDepth = Math.min(1, this._playerDepth + 0.45);
     const slideDir = crossDir !== 0 ? -crossDir : (Math.random() < 0.5 ? 1 : -1);
     this.tweens.add({
-      targets: this._defPos, x: slideDir * 220, y: 224,
-      duration: 320, ease: 'Power2',
+      targets: this._defPos, x: this._defPos.x + slideDir * 90,
+      duration: 280, ease: 'Power2',
     });
   }
 
@@ -629,13 +644,12 @@ class BasketballScene extends Phaser.Scene {
     const rows = [
       { label: 'OFFENSE',   color: '#ff8844' },
       { key: '← / →',     action: 'Move laterally — tap to Crossover, hold to run' },
-      { key: '↑',          action: 'Advance toward hoop (blocked if defender mirrors you)' },
+      { key: '↑',          action: 'Advance toward hoop (create separation to get past defender)' },
       { key: '↓',          action: 'Retreat back to baseline' },
-      { key: 'S',          action: 'Spin move — beats steal attempts' },
-      { key: 'SPACE',      action: 'Hold to charge shot, release in green zone' },
-      { label: 'DEFENSE',  color: '#44aaff' },
-      { key: 'SPACE / F',  action: 'Steal — press when STEAL WINDOW flashes!' },
-      { key: '↑ / W',     action: "Contest — press during CPU's shot arc" },
+      { key: 'S',          action: 'Spin move — beats steal attempts, clears path' },
+      { key: 'SPACE',      action: 'Hold to charge shot, release in GREEN ZONE' },
+      { key: '',           action: '' },
+      { key: 'Get OPEN',   action: 'Higher % = better shot — advance past the defender!' },
     ];
 
     let cy = top + 98;
@@ -695,9 +709,9 @@ class BasketballScene extends Phaser.Scene {
   }
 
   _startPossession() {
-    if (this.playerScore >= BB_WIN || this.aiScore >= BB_WIN) return;
-    if (this.possession === 'player') this._startOffense();
-    else                              this._startDefense();
+    if (this.playerScore >= BB_WIN) return;
+    this.possession = 'player';
+    this._startOffense();
   }
 
   _startOffense() {
@@ -916,8 +930,8 @@ class BasketballScene extends Phaser.Scene {
 
   _turnoverToAI() {
     this.state      = 'result';
-    this.possession = 'ai';
-    this._showMsg('STOLEN! CPU ball', '#ff3333');
+    this.possession = 'player';
+    this._showMsg('STOLEN! Reset', '#ff3333');
     this.cameras.main.shake(220, 0.014);
     this.time.delayedCall(1100, () => this._startPossession());
   }
@@ -1022,9 +1036,9 @@ class BasketballScene extends Phaser.Scene {
       GameState.addMoney(3);
       SaveManager.save();
     } else {
-      this._showMsg('MISS — CPU ball', '#ff8844');
+      this._showMsg('MISS — reset', '#ff8844');
     }
-    this.possession = 'ai';
+    this.possession = 'player';
     this._updateHUD();
     this._checkMatchEnd();
   }
@@ -1045,8 +1059,6 @@ class BasketballScene extends Phaser.Scene {
   _checkMatchEnd() {
     if (this.playerScore >= BB_WIN) {
       this.time.delayedCall(1300, () => this._winMatch());
-    } else if (this.aiScore >= BB_WIN) {
-      this.time.delayedCall(1300, () => this._loseMatch());
     } else {
       this.time.delayedCall(1400, () => this._startPossession());
     }
@@ -1082,7 +1094,7 @@ class BasketballScene extends Phaser.Scene {
       fontFamily: 'Courier New', fontSize: '26px', color: won ? '#55ff88' : '#ff4444',
       stroke: '#000', strokeThickness: 4,
     }).setOrigin(0.5).setScrollFactor(sf).setDepth(d));
-    mk(this.add.text(cx, top + 64, `${this.playerScore} — ${this.aiScore}`, {
+    mk(this.add.text(cx, top + 64, `${this.playerScore} baskets`, {
       fontFamily: 'Courier New', fontSize: '20px', color: '#aabbcc',
     }).setOrigin(0.5).setScrollFactor(sf).setDepth(d));
     mk(this.add.text(cx, top + 92, won

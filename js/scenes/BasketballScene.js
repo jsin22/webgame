@@ -76,6 +76,11 @@ class BasketballScene extends Phaser.Scene {
     // Player x position (moves left/right on court during offense)
     this._playerX = W / 2;
 
+    // Player depth (0 = at baseline, 1 = advanced near hoop/defender)
+    this._playerDepth    = 0;
+    this._pastDefender   = false;   // true after crossover/spin beats defender
+    this._pastDefenderTimer = 0;
+
     // Ball arc
     this._ballArcT         = 0;
     this._ballArcDur       = 1;
@@ -315,8 +320,9 @@ class BasketballScene extends Phaser.Scene {
     const skinC   = 0xd4956a;
 
     // ── Y-sort: defender depth relative to player ───────────────────────────────
-    // If defender has lunged very close, they render above the player
-    if (y >= this.PLY - 20) {
+    // Defender is "in front of" player when their Y >= player's screen Y
+    const playerScreenY = this.PLY - this._playerDepth * 130;
+    if (y >= playerScreenY - 20) {
       this._defG.setDepth(7);
       this._pLayers().forEach(pl => pl.setDepth(5.5));
     } else {
@@ -515,7 +521,7 @@ class BasketballScene extends Phaser.Scene {
     this._keys.w.on('down',     () => this._onContest());
     this._keys.left.on('down',  () => this._onCrossover(-1));
     this._keys.right.on('down', () => this._onCrossover(1));
-    this._keys.down.on('down',  () => this._onSpin());
+    // ↓ is reserved for retreating; S triggers spin
     this._keys.s.on('down',     () => this._onSpin());
     // Persistent ESC listener — exits any time
     this.input.keyboard.on('keydown-ESC', () => this._exit());
@@ -563,25 +569,23 @@ class BasketballScene extends Phaser.Scene {
   }
 
   _beatSteal(msg, bonus, crossDir, spin) {
-    this._stealDodgeActive = false;
-    this._stealWarnActive  = false;
+    this._stealDodgeActive  = false;
+    this._stealWarnActive   = false;
     this._stealWarnText.setVisible(false);
-    this.openness = Math.min(0.95, this.openness + bonus);
+    this.openness           = Math.min(0.95, this.openness + bonus);
+    this._pastDefender      = true;
+    this._pastDefenderTimer = 3.5;  // seconds before defender recovers
     this._showMsg(msg, '#00ffcc');
     if (crossDir !== 0) { this._crossoverDir = crossDir; this._crossoverTimer = 0.5; }
     if (spin)           { this._spinActive = true;        this._spinTimer = 0.60; }
     this._resetNextStealTimer();
 
-    // Defender stumbles sideways (opposite crossover dir) and retreats on Z-axis,
-    // then slowly recovers. The Z retreat (y shrinks) shows them as "beaten."
+    // Defender stumbles sideways (opposite crossover dir) and retreats on Z-axis.
+    // Recovery is handled by the logic loop once _pastDefender expires.
     const slideDir = crossDir !== 0 ? -crossDir : (Math.random() < 0.5 ? 1 : -1);
     this.tweens.add({
-      targets: this._defPos, x: slideDir * 180, y: 224,
-      duration: 340, ease: 'Power2',
-      onComplete: () => this.tweens.add({
-        targets: this._defPos, x: 0, y: 314,
-        duration: 700, delay: 600, ease: 'Sine.easeInOut',
-      }),
+      targets: this._defPos, x: slideDir * 220, y: 224,
+      duration: 320, ease: 'Power2',
     });
   }
 
@@ -624,8 +628,10 @@ class BasketballScene extends Phaser.Scene {
 
     const rows = [
       { label: 'OFFENSE',   color: '#ff8844' },
-      { key: '← / →',     action: 'Crossover — react when defender FLASHES & lunges!' },
-      { key: '↓ / S',     action: 'Spin move — also beats steal attempts' },
+      { key: '← / →',     action: 'Move laterally — tap to Crossover, hold to run' },
+      { key: '↑',          action: 'Advance toward hoop (blocked if defender mirrors you)' },
+      { key: '↓',          action: 'Retreat back to baseline' },
+      { key: 'S',          action: 'Spin move — beats steal attempts' },
       { key: 'SPACE',      action: 'Hold to charge shot, release in green zone' },
       { label: 'DEFENSE',  color: '#44aaff' },
       { key: 'SPACE / F',  action: 'Steal — press when STEAL WINDOW flashes!' },
@@ -707,14 +713,17 @@ class BasketballScene extends Phaser.Scene {
     this._stealWarnText.setVisible(false);
     this._switchText.setVisible(false);
     this._meterCont.setVisible(false);
-    this._defPos.y         = 314;
-    this._defPos.x         = 0;
-    this._playerX          = this.W / 2;
-    this._ballX            = this._playerX + 18;
-    this._ballY            = this.PLY - 20;
+    this._defPos.y          = 314;
+    this._defPos.x          = 0;
+    this._playerX           = this.W / 2;
+    this._playerDepth       = 0;
+    this._pastDefender      = false;
+    this._pastDefenderTimer = 0;
+    this._ballX             = this._playerX + 18;
+    this._ballY             = this.PLY - 20;
     this._resetNextStealTimer();
     this._updateHUD();
-    this._ctrlText.setText('←/→ Crossover  ↓/S Spin  SPACE hold+release to shoot');
+    this._ctrlText.setText('←/→ move  ↑ advance  ↓ retreat  S Spin  SPACE hold+release to shoot');
   }
 
   _startDefense() {
@@ -766,6 +775,55 @@ class BasketballScene extends Phaser.Scene {
   // ── Offense ──────────────────────────────────────────────────────────────────
 
   _updateOffense(dt) {
+    const opp = BB_OPPONENTS[Math.min(_BB.level, BB_OPPONENTS.length - 1)];
+
+    // ── Player movement ──────────────────────────────────────────────────────────
+    // Lateral: free left/right (crossover animation fires on keydown separately)
+    if (!this._stealDodgeActive) {
+      if (this._keys.left.isDown)  this._playerX = Math.max(80,  this._playerX - 220 * dt);
+      if (this._keys.right.isDown) this._playerX = Math.min(720, this._playerX + 220 * dt);
+    }
+
+    // Forward (↑): blocked if defender is directly in front
+    const playerScreenY   = this.PLY - this._playerDepth * 130;
+    const defLateralGap   = Math.abs(this._playerX - (this.W / 2 + this._defPos.x));
+    const defBlocking     = !this._pastDefender && defLateralGap < 70;
+    if (this._keys.up.isDown && !defBlocking && !this._charging) {
+      this._playerDepth = Math.min(1, this._playerDepth + 0.28 * dt);
+    }
+    // Backward (↓)
+    if (this._keys.down.isDown) {
+      this._playerDepth = Math.max(0, this._playerDepth - 0.38 * dt);
+    }
+
+    // ── Defender lateral mirroring ───────────────────────────────────────────────
+    // Harder defenders mirror faster, making it harder to get past
+    const mirrorSpeed = 80 + opp.stealFreq * 320;  // Rookie ~98 px/s, Legend ~304 px/s
+    const targetDefX  = this._playerX - this.W / 2; // center-relative
+    if (!this._pastDefender) {
+      const dx   = targetDefX - this._defPos.x;
+      const step = mirrorSpeed * dt;
+      this._defPos.x += Math.sign(dx) * Math.min(Math.abs(dx), step);
+    }
+
+    // ── Defender depth tracks player (when not in steal animation) ───────────────
+    if (!this._stealWarnActive && !this._stealDodgeActive && !this._pastDefender) {
+      const targetDefY = (this.PLY - this._playerDepth * 130) - 80;
+      const dy         = targetDefY - this._defPos.y;
+      this._defPos.y  += dy * Math.min(1, 3.5 * dt);
+    }
+
+    // ── Past-defender timer ──────────────────────────────────────────────────────
+    if (this._pastDefender) {
+      this._pastDefenderTimer -= dt;
+      // Openness grows while past the defender (near basket, open look)
+      this.openness = Math.min(0.95, this.openness + 0.06 * dt);
+      if (this._pastDefenderTimer <= 0) {
+        this._pastDefender = false;
+        // Defender recovers — smoothly slides back (logic will mirror again)
+      }
+    }
+
     // Charge meter animation
     if (this._charging) {
       this._chargeVal = Math.min(1, this._chargeVal + 0.88 * dt);
@@ -845,10 +903,13 @@ class BasketballScene extends Phaser.Scene {
       q = (cv / 0.60) * 0.45;
     }
 
-    const made = Math.random() < this.openness * q;
+    // Openness also grows with depth: deeper = better look
+    const depthOpenBonus = this._playerDepth * 0.25;
+    const made = Math.random() < Math.min(0.95, this.openness + depthOpenBonus) * q;
     this._stealWarnText.setVisible(false);
     this._ctrlText.setText('');
-    this._startBallArc(this._ballX, this._ballY, this.RX, this.RY, 880, made, true);
+    const playerScreenY = this.PLY - this._playerDepth * 130;
+    this._startBallArc(this._playerX, playerScreenY - 20, this.RX, this.RY, 880, made, true);
     this.state = 'shot_arc';
   }
 
@@ -1063,15 +1124,17 @@ class BasketballScene extends Phaser.Scene {
   _updateVisuals(dt) {
     this._dribblePhase = (this._dribblePhase + dt * 6.5) % (Math.PI * 2);
 
-    // Player always centered — this is a state-machine game, not positional
-    this._pLayers().forEach(s => s.setPosition(this.W / 2, this.PLY));
+    // Player screen position — depth moves them toward the hoop (up the court)
+    const playerScreenY = this.PLY - this._playerDepth * 130;
+    const psc = this.perspScale(playerScreenY);  // scale shrinks as they advance
+    this._pLayers().forEach(s => s.setPosition(this._playerX, playerScreenY));
 
     // Ball dribble position (while not arcing)
     if (this.state !== 'shot_arc') {
       if (this.state === 'offense') {
         const sway = this._crossoverDir * 20 * Math.max(0, this._crossoverTimer / 0.42);
-        this._ballX = this.W / 2 + 18 + sway;
-        this._ballY = this.PLY - 18 - Math.abs(Math.sin(this._dribblePhase)) * 22;
+        this._ballX = this._playerX + 18 + sway;
+        this._ballY = playerScreenY - 18 - Math.abs(Math.sin(this._dribblePhase)) * 22;
       } else if (this.state === 'defense') {
         this._ballX = this.W / 2 + this._defPos.x + 16;
         this._ballY = this._defPos.y - 36 - Math.abs(Math.sin(this._dribblePhase)) * 18;
@@ -1084,22 +1147,24 @@ class BasketballScene extends Phaser.Scene {
     if (this._spinActive)            fi = Math.floor(now / 55) % 4 + 12;  // spin: walk-up frames
     else if (this._crossoverDir < 0) fi = Math.floor(now / 70) % 4 + 4;   // crossover left
     else if (this._crossoverDir > 0) fi = Math.floor(now / 70) % 4 + 8;   // crossover right
+    else if (this._keys?.up?.isDown) fi = Math.floor(now / 120) % 4 + 12;  // advancing forward
     else                             fi = Math.floor(now / 220) % 4 + 8;   // idle dribble
     this._pFrame(fi);
 
     // Player transparency — 50% so the defender is always visible through them
-    const now2 = Date.now();
     this._pAlpha(this._spinActive
-      ? 0.25 + Math.abs(Math.sin(now2 / 38)) * 0.35   // flicker during spin
-      : 0.50);                                          // always semi-transparent
+      ? 0.25 + Math.abs(Math.sin(now / 38)) * 0.35   // flicker during spin
+      : 0.50);                                         // always semi-transparent
 
-    // Player squish on crossover
+    // Player squish on crossover — scale uses perspective depth
     if (this._crossoverDir !== 0 && this._crossoverTimer > 0) {
       const prog = 1 - this._crossoverTimer / 0.42;
       const sq   = Math.sin(prog * Math.PI * 2) * 0.10;
-      this._pScale(1 - sq, 1 + sq * 0.4);
+      const ps   = this.PLAYER_SCALE * psc;
+      this._pLayers().forEach(s => s.setScale(ps * (1 - sq), ps * (1 + sq * 0.4)));
     } else {
-      this._pScale(1, 1);
+      const ps = this.PLAYER_SCALE * psc;
+      this._pLayers().forEach(s => s.setScale(ps, ps));
     }
   }
 

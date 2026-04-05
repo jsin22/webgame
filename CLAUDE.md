@@ -100,19 +100,26 @@ All venues are entered via proximity + E key. On enter: `scene.pause('GameScene'
 | Home | HomeScene | `home_entrance` | (0,1) |
 | Gym | BasketballScene | `gym_entrance` | (2,0) |
 
-## BasketballScene — "Bounce Chain"
+## BasketballScene — "Pro-Hoops Duel"
 
-Side-view physics mini-game. `physics.world.gravity.y = 650`.
+1-on-1 behind-the-back basketball. Pseudo-3D court via vanishing-point perspective lines. `physics.world.gravity.y = 0` (no physics bodies used; all positions are manual).
 
-**Physics tuning**:
-- `ball.setBounce(0.90)` — 90% energy retained per wall hit; keeps ball live through multi-wall chains
-- `ball.setDragX(0); ball.setDragY(0)` — no drag in flight; floor friction applied manually in `update()` via `velocity.x *= 0.88` only when `body.blocked.down`
-- Bounce counter uses pre-collision `_prevVy` (stored each frame before physics resolves) to filter rolling: floor/ceiling hits only count if `|prevVy| ≥ 120`; side wall hits only count if `|prevVy| ≥ 60`
-- Settle/miss triggers when `Math.hypot(vx, vy) < 60`
+**Game flow**: alternating possessions. First to `BB_WIN` (5) baskets wins the match. Win → opponent level increments (5 levels: Rookie → Legend). Level persists in module-level `_BB` across gym visits.
 
-**Scoring**: base 2 pts × multiplier (1×/2×/5×/10× for 0/1+/3+/5+ bounces).
+**Offense** (player has ball):
+- `←/→` Crossover — if timed during the defender's steal dodge window → Blow-by (+openness)
+- `↓/S` Spin move — also beats steal attempts
+- `SPACE` hold then release — shot charge meter (sweet spot 0.60–0.90 of bar); shot success = openness × shot_quality
+- Defender makes steal attempts on a timer; triggers brief warn flash then a reaction window (`reactionMs` varies by level)
 
-**Hoop**: right side of court, fixed position. Ball must pass through with `vy > 20` (downward).
+**Defense** (AI has ball):
+- `SPACE/F` Steal — press during STEAL WINDOW flash (AI dribble switch)
+- `↑/W` Contest — press while CPU shot arc is in the air (reduces AI shot accuracy by ~48%)
+- AI shoots after a random timer; shot accuracy scales by opponent level
+
+**Opponent table** (`BB_OPPONENTS`): `reactionMs` 800→100ms, `stealFreq` 0.055→0.70, `shotAcc` 0.28→0.90.
+
+**Perspective court**: vanishing point at `(W/2, 182)`, bottom at y=548. `perspX(x0, y)` helper computes perspective x. Key drawn as trapezoid, free throw ellipse, three-point ellipse.
 
 ## Production
 

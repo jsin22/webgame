@@ -36,11 +36,12 @@ class BasketballScene extends Phaser.Scene {
     this.physics.world.gravity.y = 0;
 
     // Court geometry
-    this.VP  = { x: W / 2, y: 182 };  // vanishing point
-    this.BY  = 548;                     // court bottom y
-    this.RX  = W / 2;                   // rim x
-    this.RY  = 200;                     // rim y
-    this.PLY = 454;                     // player sprite center y
+    this.VP           = { x: W / 2, y: 182 };  // vanishing point
+    this.BY           = 548;                     // court bottom y
+    this.RX           = W / 2;                   // rim x
+    this.RY           = 152;                     // rim y (high above defender)
+    this.PLY          = 454;                     // player sprite center y
+    this.PLAYER_SCALE = 1.3;                     // player sprite scale
 
     // Match
     this.playerScore = 0;
@@ -70,7 +71,10 @@ class BasketballScene extends Phaser.Scene {
     this._arcContested       = false;
 
     // Defender animated position (tweened via plain object)
-    this._defPos = { y: 314 };
+    this._defPos = { y: 314, x: 0 };  // x is lateral offset from center
+
+    // Player x position (moves left/right on court during offense)
+    this._playerX = W / 2;
 
     // Ball arc
     this._ballArcT         = 0;
@@ -229,13 +233,14 @@ class BasketballScene extends Phaser.Scene {
     const t   = hex => parseInt((hex || '#ffffff').replace('#', ''), 16);
     const bk  = cd.gender === 'female' ? 'player_body_female' : 'player_body_male';
 
-    this._pBody  = this.add.sprite(W / 2, y, bk, 8).setDepth(6.0).setAlpha(0.88);
+    const ps = this.PLAYER_SCALE;
+    this._pBody  = this.add.sprite(W / 2, y, bk, 8).setDepth(6.0).setAlpha(0.88).setScale(ps);
     this._pShirt = this.add.sprite(W / 2, y, 'player_shirt', 8).setDepth(6.2).setAlpha(0.88)
-      .setTint(t(cd.colors?.shirt));
+      .setTint(t(cd.colors?.shirt)).setScale(ps);
     this._pPants = this.add.sprite(W / 2, y, 'player_pants', 8).setDepth(6.3).setAlpha(0.88)
-      .setTint(t(cd.colors?.pants));
+      .setTint(t(cd.colors?.pants)).setScale(ps);
     this._pShoes = this.add.sprite(W / 2, y, 'player_shoes', 8).setDepth(6.1).setAlpha(0.88)
-      .setTint(t(cd.colors?.shoes));
+      .setTint(t(cd.colors?.shoes)).setScale(ps);
 
     if (!this.anims.exists('bb2_idle')) {
       this.anims.create({ key: 'bb2_idle',
@@ -247,7 +252,10 @@ class BasketballScene extends Phaser.Scene {
 
   _pLayers() { return [this._pBody, this._pShirt, this._pPants, this._pShoes]; }
   _pAlpha(a) { this._pLayers().forEach(s => s.setAlpha(a)); }
-  _pScale(sx, sy) { this._pLayers().forEach(s => s.setScale(sx, sy)); }
+  _pScale(sx, sy) {
+    const ps = this.PLAYER_SCALE;
+    this._pLayers().forEach(s => s.setScale(ps * sx, ps * sy));
+  }
   _pFrame(f) { this._pLayers().forEach(s => s.setFrame(f)); }
 
   // ── Defender (drawn each frame) ──────────────────────────────────────────────
@@ -266,12 +274,12 @@ class BasketballScene extends Phaser.Scene {
     g.clear();
     if (this.state === 'menu') return;
 
-    const x  = this.W / 2;
+    const x  = this.W / 2 + this._defPos.x;
     const y  = this._defPos.y;
 
-    // Scale by depth (closer y = larger)
+    // Scale by depth — kept small to match player visual size
     const td = Math.max(0, Math.min(1, (y - 220) / 160));
-    const sc = 0.40 + td * 0.72;
+    const sc = 0.22 + td * 0.22;
     const s  = v => v * sc;
 
     const warn     = this._stealWarnActive || this._stealDodgeActive || this._switchWindowActive;
@@ -522,11 +530,17 @@ class BasketballScene extends Phaser.Scene {
     if (crossDir !== 0) { this._crossoverDir = crossDir; this._crossoverTimer = 0.5; }
     if (spin)           { this._spinActive = true;        this._spinTimer = 0.60; }
     this._resetNextStealTimer();
-    // Defender backs off then returns
+
+    // Defender slides to the side opposite the crossover (or random side for spin),
+    // then recovers back to center
+    const slideDir = crossDir !== 0 ? -crossDir : (Math.random() < 0.5 ? 1 : -1);
+    const slideX   = slideDir * 160;
     this.tweens.add({
-      targets: this._defPos, y: 252, duration: 280, ease: 'Power2',
+      targets: this._defPos, x: slideX, y: 260,
+      duration: 320, ease: 'Power2',
       onComplete: () => this.tweens.add({
-        targets: this._defPos, y: 314, duration: 520, delay: 350,
+        targets: this._defPos, x: 0, y: 314,
+        duration: 580, delay: 500, ease: 'Sine.easeInOut',
       }),
     });
   }
@@ -654,7 +668,9 @@ class BasketballScene extends Phaser.Scene {
     this._switchText.setVisible(false);
     this._meterCont.setVisible(false);
     this._defPos.y         = 314;
-    this._ballX            = this.W / 2 + 18;
+    this._defPos.x         = 0;
+    this._playerX          = this.W / 2;
+    this._ballX            = this._playerX + 18;
     this._ballY            = this.PLY - 20;
     this._resetNextStealTimer();
     this._updateHUD();
@@ -669,6 +685,8 @@ class BasketballScene extends Phaser.Scene {
     this._stealWarnText.setVisible(false);
     this._switchText.setVisible(false);
     this._defPos.y           = 314;
+    this._defPos.x           = 0;
+    this._playerX            = this.W / 2;
     this._ballX              = this.W / 2 + 16;
     this._ballY              = this._defPos.y - 38;
     this._resetNextSwitchTimer();
@@ -741,6 +759,13 @@ class BasketballScene extends Phaser.Scene {
     // Crossover/spin animation timers
     if (this._crossoverTimer > 0 && (this._crossoverTimer -= dt) <= 0) this._crossoverDir = 0;
     if (this._spinTimer     > 0 && (this._spinTimer     -= dt) <= 0) this._spinActive = false;
+
+    // Free lateral movement (held keys) — clamped to court width
+    if (!this._charging) {
+      const MOVE_SPEED = 190;
+      if (this._keys.left.isDown)  this._playerX = Math.max(160, this._playerX - MOVE_SPEED * dt);
+      if (this._keys.right.isDown) this._playerX = Math.min(640, this._playerX + MOVE_SPEED * dt);
+    }
   }
 
   _triggerStealAttempt() {
@@ -846,7 +871,7 @@ class BasketballScene extends Phaser.Scene {
     this._showMsg('CPU SHOOTING!', '#ff8855', 700);
     this._ctrlText.setText('↑/W — CONTEST NOW!');
     // made=null: evaluated on landing (contest can still happen during arc)
-    this._startBallArc(this.W / 2 + 14, this._defPos.y - 36, this.RX, this.RY, 860, null, false);
+    this._startBallArc(this.W / 2 + this._defPos.x + 14, this._defPos.y - 36, this.RX, this.RY, 860, null, false);
     this.state = 'shot_arc';
   }
 
@@ -994,14 +1019,17 @@ class BasketballScene extends Phaser.Scene {
   _updateVisuals(dt) {
     this._dribblePhase = (this._dribblePhase + dt * 6.5) % (Math.PI * 2);
 
+    // Move player sprites to current _playerX
+    this._pLayers().forEach(s => s.setPosition(this._playerX, this.PLY));
+
     // Ball dribble position (while not arcing)
     if (this.state !== 'shot_arc') {
       if (this.state === 'offense') {
         const sway = this._crossoverDir * 18 * Math.max(0, this._crossoverTimer / 0.42);
-        this._ballX = this.W / 2 + 18 + sway;
+        this._ballX = this._playerX + 18 + sway;
         this._ballY = this.PLY - 18 - Math.abs(Math.sin(this._dribblePhase)) * 22;
       } else if (this.state === 'defense') {
-        this._ballX = this.W / 2 + 16;
+        this._ballX = this.W / 2 + this._defPos.x + 16;
         this._ballY = this._defPos.y - 36 - Math.abs(Math.sin(this._dribblePhase)) * 18;
       }
     }
@@ -1009,10 +1037,12 @@ class BasketballScene extends Phaser.Scene {
     // Player frame selection
     const now = Date.now();
     let fi;
-    if (this._spinActive)          fi = Math.floor(now / 55) % 4 + 12;  // walk-up (spin)
-    else if (this._crossoverDir < 0) fi = Math.floor(now / 75) % 4 + 4; // walk-left
-    else if (this._crossoverDir > 0) fi = Math.floor(now / 75) % 4 + 8; // walk-right
-    else                             fi = Math.floor(now / 200) % 4 + 8; // idle bob
+    const moving = this._keys.left?.isDown || this._keys.right?.isDown;
+    if (this._spinActive)            fi = Math.floor(now / 55) % 4 + 12;
+    else if (this._crossoverDir < 0) fi = Math.floor(now / 75) % 4 + 4;
+    else if (this._crossoverDir > 0) fi = Math.floor(now / 75) % 4 + 8;
+    else if (moving)                 fi = Math.floor(now / 110) % 4 + 8;
+    else                             fi = Math.floor(now / 220) % 4 + 8; // idle bob
     this._pFrame(fi);
 
     // Player alpha

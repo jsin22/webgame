@@ -713,10 +713,10 @@ class BasketballScene extends Phaser.Scene {
     this._stealWarnText.setVisible(false);
     this._switchText.setVisible(false);
     this._meterCont.setVisible(false);
-    this._defPos.y          = 314;
+    this._defPos.y          = 370;
     this._defPos.x          = 0;
     this._playerX           = this.W / 2;
-    this._playerDepth       = 0;
+    this._playerDepth       = 0.18;   // start slightly advanced so ↓ is immediately responsive
     this._pastDefender      = false;
     this._pastDefenderTimer = 0;
     this._ballX             = this._playerX + 18;
@@ -784,14 +784,15 @@ class BasketballScene extends Phaser.Scene {
       if (this._keys.right.isDown) this._playerX = Math.min(720, this._playerX + 220 * dt);
     }
 
-    // Forward (↑): blocked if defender is directly in front
-    const playerScreenY   = this.PLY - this._playerDepth * 130;
-    const defLateralGap   = Math.abs(this._playerX - (this.W / 2 + this._defPos.x));
-    const defBlocking     = !this._pastDefender && defLateralGap < 70;
-    if (this._keys.up.isDown && !defBlocking && !this._charging) {
-      this._playerDepth = Math.min(1, this._playerDepth + 0.28 * dt);
+    // Forward (↑): defender slows advance proportional to lateral coverage
+    // blockFactor = 0 (fully covered) → 1 (open). Past defender = always open.
+    const playerScreenY = this.PLY - this._playerDepth * 130;
+    const defLateralGap = Math.abs(this._playerX - (this.W / 2 + this._defPos.x));
+    const blockFactor   = this._pastDefender ? 1.0 : Math.min(1.0, defLateralGap / 70);
+    if (this._keys.up.isDown && !this._charging) {
+      this._playerDepth = Math.min(1, this._playerDepth + 0.28 * dt * blockFactor);
     }
-    // Backward (↓)
+    // Backward (↓) — always allowed
     if (this._keys.down.isDown) {
       this._playerDepth = Math.max(0, this._playerDepth - 0.38 * dt);
     }

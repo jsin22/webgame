@@ -82,6 +82,10 @@ class BasketballScene extends Phaser.Scene {
     this._pastDefender   = false;   // true after crossover/spin beats defender
     this._pastDefenderTimer = 0;
 
+    // Smoothed display positions (lerp toward logical targets each render frame)
+    this._playerDispX     = W / 2;
+    this._playerDispDepth = 0;
+
     // Ball arc
     this._ballArcT         = 0;
     this._ballArcDur       = 1;
@@ -522,20 +526,16 @@ class BasketballScene extends Phaser.Scene {
       right: Phaser.Input.Keyboard.KeyCodes.RIGHT,
       up:    Phaser.Input.Keyboard.KeyCodes.UP,
       down:  Phaser.Input.Keyboard.KeyCodes.DOWN,
-      w:     Phaser.Input.Keyboard.KeyCodes.W,
-      s:     Phaser.Input.Keyboard.KeyCodes.S,
+      z:     Phaser.Input.Keyboard.KeyCodes.Z,   // crossover
+      x:     Phaser.Input.Keyboard.KeyCodes.X,   // spin
+      s:     Phaser.Input.Keyboard.KeyCodes.S,   // spin (alt)
       space: Phaser.Input.Keyboard.KeyCodes.SPACE,
-      f:     Phaser.Input.Keyboard.KeyCodes.F,
     });
 
     this._keys.space.on('down', () => this._onSpaceDown());
     this._keys.space.on('up',   () => this._onSpaceUp());
-    this._keys.f.on('down',     () => this._onSpaceDown());
-    this._keys.up.on('down',    () => this._onContest());
-    this._keys.w.on('down',     () => this._onContest());
-    this._keys.left.on('down',  () => this._onCrossover(-1));
-    this._keys.right.on('down', () => this._onCrossover(1));
-    // ↓ is reserved for retreating; S triggers spin
+    this._keys.z.on('down',     () => this._onCrossover());
+    this._keys.x.on('down',     () => this._onSpin());
     this._keys.s.on('down',     () => this._onSpin());
     // Persistent ESC listener — exits any time
     this.input.keyboard.on('keydown-ESC', () => this._exit());
@@ -560,8 +560,12 @@ class BasketballScene extends Phaser.Scene {
     }
   }
 
-  _onCrossover(dir) {
+  _onCrossover() {
     if (this.state !== 'offense') return;
+    // Direction: follow held arrow, or toward open side relative to defender
+    const dir = this._keys.left.isDown  ? -1
+              : this._keys.right.isDown ? 1
+              : (this._playerX > this.W / 2 + this._defPos.x ? 1 : -1);
     if (this._stealDodgeActive) {
       this._beatSteal('BLOW-BY!', 0.38, dir, false);
     } else if (!this._stealWarnActive) {
@@ -643,10 +647,10 @@ class BasketballScene extends Phaser.Scene {
 
     const rows = [
       { label: 'OFFENSE',   color: '#ff8844' },
-      { key: '← / →',     action: 'Move laterally — tap to Crossover, hold to run' },
-      { key: '↑',          action: 'Advance toward hoop (create separation to get past defender)' },
-      { key: '↓',          action: 'Retreat back to baseline' },
-      { key: 'S',          action: 'Spin move — beats steal attempts, clears path' },
+      { key: '← / →',     action: 'Move laterally — create separation from defender' },
+      { key: '↑ / ↓',     action: 'Advance toward hoop / retreat to baseline' },
+      { key: 'Z',          action: 'Crossover — quick direction change, beats steal window' },
+      { key: 'X  or  S',  action: 'Spin move — also beats steal attempts' },
       { key: 'SPACE',      action: 'Hold to charge shot, release in GREEN ZONE' },
       { key: '',           action: '' },
       { key: 'Get OPEN',   action: 'Higher % = better shot — advance past the defender!' },
@@ -730,14 +734,17 @@ class BasketballScene extends Phaser.Scene {
     this._defPos.y          = 370;
     this._defPos.x          = 0;
     this._playerX           = this.W / 2;
-    this._playerDepth       = 0.18;   // start slightly advanced so ↓ is immediately responsive
+    this._playerDepth       = 0.18;
     this._pastDefender      = false;
     this._pastDefenderTimer = 0;
+    // Snap display to logical so there's no lerp gap at possession start
+    this._playerDispX     = this._playerX;
+    this._playerDispDepth = this._playerDepth;
     this._ballX             = this._playerX + 18;
     this._ballY             = this.PLY - 20;
     this._resetNextStealTimer();
     this._updateHUD();
-    this._ctrlText.setText('←/→ move  ↑ advance  ↓ retreat  S Spin  SPACE hold+release to shoot');
+    this._ctrlText.setText('←/→ move  ↑↓ advance/retreat  Z crossover  X/S spin  SPACE shoot');
   }
 
   _startDefense() {
@@ -923,8 +930,8 @@ class BasketballScene extends Phaser.Scene {
     const made = Math.random() < Math.min(0.95, this.openness + depthOpenBonus) * q;
     this._stealWarnText.setVisible(false);
     this._ctrlText.setText('');
-    const playerScreenY = this.PLY - this._playerDepth * 130;
-    this._startBallArc(this._playerX, playerScreenY - 20, this.RX, this.RY, 880, made, true);
+    const playerScreenY = this.PLY - this._playerDispDepth * 130;
+    this._startBallArc(this._playerDispX, playerScreenY - 20, this.RX, this.RY, 880, made, true);
     this.state = 'shot_arc';
   }
 
@@ -1137,16 +1144,21 @@ class BasketballScene extends Phaser.Scene {
   _updateVisuals(dt) {
     this._dribblePhase = (this._dribblePhase + dt * 6.5) % (Math.PI * 2);
 
-    // Player screen position — depth moves them toward the hoop (up the court)
-    const playerScreenY = this.PLY - this._playerDepth * 130;
-    const psc = this.perspScale(playerScreenY);  // scale shrinks as they advance
-    this._pLayers().forEach(s => s.setPosition(this._playerX, playerScreenY));
+    // Lerp display positions toward logical targets — gives smooth glide feel
+    const LSPD = 1 - Math.pow(0.04, dt);  // ~96% of gap closed per second
+    this._playerDispX     += (this._playerX     - this._playerDispX)     * LSPD;
+    this._playerDispDepth += (this._playerDepth - this._playerDispDepth) * LSPD;
+
+    // Player screen position uses display (smoothed) values
+    const playerScreenY = this.PLY - this._playerDispDepth * 130;
+    const psc = this.perspScale(playerScreenY);
+    this._pLayers().forEach(s => s.setPosition(this._playerDispX, playerScreenY));
 
     // Ball dribble position (while not arcing)
     if (this.state !== 'shot_arc') {
       if (this.state === 'offense') {
         const sway = this._crossoverDir * 20 * Math.max(0, this._crossoverTimer / 0.42);
-        this._ballX = this._playerX + 18 + sway;
+        this._ballX = this._playerDispX + 18 + sway;
         this._ballY = playerScreenY - 18 - Math.abs(Math.sin(this._dribblePhase)) * 22;
       } else if (this.state === 'defense') {
         this._ballX = this.W / 2 + this._defPos.x + 16;

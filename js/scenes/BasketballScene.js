@@ -90,6 +90,11 @@ class BasketballScene extends Phaser.Scene {
     this._ballY      = this.PLY - 20;
     this._dribblePhase = 0;
 
+    // Fixed-logic accumulator — game logic runs at 60 Hz regardless of render FPS
+    // This keeps timing windows (steal reactions) consistent across frame rates.
+    this._logicAccum = 0;
+    this.LOGIC_DT    = 1 / 60;
+
     this._buildTextures();
     this._drawBg();
     this._drawCourt();
@@ -258,6 +263,14 @@ class BasketballScene extends Phaser.Scene {
   }
   _pFrame(f) { this._pLayers().forEach(s => s.setFrame(f)); }
 
+  // ── Perspective Manager ───────────────────────────────────────────────────────
+  // Single source of truth for depth→scale mapping.
+  // y = VP.y (horizon, 182) → 0.18   y = BY (bottom, 548) → 1.0
+  perspScale(y) {
+    const t = Math.max(0, Math.min(1, (y - this.VP.y) / (this.BY - this.VP.y)));
+    return 0.18 + t * 0.82;
+  }
+
   // ── Defender (drawn each frame) ──────────────────────────────────────────────
 
   _buildDefender() {
@@ -274,18 +287,44 @@ class BasketballScene extends Phaser.Scene {
     g.clear();
     if (this.state === 'menu') return;
 
-    const x  = this.W / 2 + this._defPos.x;
     const y  = this._defPos.y;
-
-    // Scale by depth — kept small to match player visual size
-    const td = Math.max(0, Math.min(1, (y - 220) / 160));
-    const sc = 0.22 + td * 0.22;
+    const sc = this.perspScale(y);
     const s  = v => v * sc;
 
-    const warn     = this._stealWarnActive || this._stealDodgeActive || this._switchWindowActive;
-    const jerseyC  = warn ? 0xff2222 : 0x1f4dcc;
-    const shortsC  = warn ? 0xcc1111 : 0x163a99;
-    const skinC    = 0xd4956a;
+    // ── Visual states ───────────────────────────────────────────────────────────
+    // Steal warn: defender LEANS toward player (5px shift) + jersey flashes
+    const stealWarn  = this._stealWarnActive || this._stealDodgeActive;
+    const switchWarn = this._switchWindowActive;
+    const now        = Date.now();
+
+    // Dribble sway: defender shifts slightly L/R while dribbling
+    const dribbleSway = (this.state === 'defense')
+      ? Math.sin(this._dribblePhase * 1.8) * s(7) : 0;
+
+    // Lean during steal warn: 8px toward player center
+    const leanX = stealWarn ? s(8) * (this._defPos.x <= 0 ? 1 : -1) : 0;
+
+    // Flash: rapid jersey color flicker every 60ms during tell window
+    const flashing = stealWarn || switchWarn;
+    const flashOn  = flashing && (Math.floor(now / 55) % 2 === 0);
+
+    const x = this.W / 2 + this._defPos.x + dribbleSway + leanX;
+
+    const jerseyC = flashOn  ? 0xffee00 : (stealWarn || switchWarn) ? 0xff2222 : 0x1f4dcc;
+    const shortsC = flashOn  ? 0xddcc00 : (stealWarn || switchWarn) ? 0xcc1111 : 0x163a99;
+    const skinC   = 0xd4956a;
+
+    // ── Y-sort: defender depth relative to player ───────────────────────────────
+    // If defender has lunged very close, they render above the player
+    if (y >= this.PLY - 20) {
+      this._defG.setDepth(7);
+      this._pLayers().forEach(pl => pl.setDepth(5.5));
+    } else {
+      this._defG.setDepth(5);
+      this._pLayers().forEach(pl => pl.setDepth(6));
+    }
+
+    // ── Draw ────────────────────────────────────────────────────────────────────
 
     // Shadow
     g.fillStyle(0x000000, 0.22);
@@ -314,36 +353,38 @@ class BasketballScene extends Phaser.Scene {
     g.lineBetween(x - s(4),  y - s(82),  x - s(4),  y - s(68));
     g.strokeCircle(x + s(10), y - s(95), s(12));
 
-    // Arms (raise during steal / contest)
-    const armRaise = (this._switchWindowActive || this._stealDodgeActive) ? s(28) : 0;
+    // Arms — raised during steal / contest; swing during dribble
+    const armSwing  = (this.state === 'defense') ? Math.sin(this._dribblePhase * 1.8) * s(10) : 0;
+    const armRaise  = (switchWarn || this._stealDodgeActive) ? s(28) : 0;
     g.lineStyle(s(14), jerseyC);
-    g.lineBetween(x - s(32), y - s(112), x - s(55), y - s(72));
-    g.lineBetween(x + s(32), y - s(112), x + s(55), y - s(72));
+    g.lineBetween(x - s(32), y - s(112), x - s(55), y - s(72) + armSwing);
+    g.lineBetween(x + s(32), y - s(112), x + s(55), y - s(72) - armSwing);
     g.lineStyle(s(11), skinC);
-    g.lineBetween(x - s(55), y - s(72), x - s(50), y - s(105) - armRaise);
-    g.lineBetween(x + s(55), y - s(72), x + s(50), y - s(105) - armRaise);
+    g.lineBetween(x - s(55), y - s(72) + armSwing,  x - s(50), y - s(105) - armRaise + armSwing);
+    g.lineBetween(x + s(55), y - s(72) - armSwing,  x + s(50), y - s(105) - armRaise - armSwing);
 
     // Neck + head
     g.fillStyle(skinC);
     g.fillRect(x - s(12), y - s(146), s(24), s(18));
     g.fillCircle(x, y - s(162), s(20));
 
-    // Eyes
-    g.fillStyle(0xffffff);
+    // Eyes — flash yellow when steal is imminent
+    const eyeC = flashOn ? 0xff4400 : 0xffffff;
+    g.fillStyle(eyeC);
     g.fillRect(x - s(12), y - s(170), s(8), s(5));
     g.fillRect(x + s(4),  y - s(170), s(8), s(5));
     g.fillStyle(0x111111);
     g.fillRect(x - s(10), y - s(169), s(5), s(4));
     g.fillRect(x + s(5),  y - s(169), s(5), s(4));
-    // Scowl
+    // Scowl (angry brow)
     g.lineStyle(s(2), 0x3a1a00);
     g.lineBetween(x - s(13), y - s(176), x - s(5), y - s(172));
     g.lineBetween(x + s(5),  y - s(172), x + s(13), y - s(176));
 
-    // Name plate above head
+    // Name plate
     const nameY = y - s(192);
     this._defNameText.setPosition(x, nameY).setVisible(true)
-      .setFontSize(Math.max(9, Math.round(11 * sc)) + 'px');
+      .setFontSize(Math.max(8, Math.round(10 * sc)) + 'px');
   }
 
   // ── Ball ────────────────────────────────────────────────────────────────────
@@ -531,16 +572,15 @@ class BasketballScene extends Phaser.Scene {
     if (spin)           { this._spinActive = true;        this._spinTimer = 0.60; }
     this._resetNextStealTimer();
 
-    // Defender slides to the side opposite the crossover (or random side for spin),
-    // then recovers back to center
+    // Defender stumbles sideways (opposite crossover dir) and retreats on Z-axis,
+    // then slowly recovers. The Z retreat (y shrinks) shows them as "beaten."
     const slideDir = crossDir !== 0 ? -crossDir : (Math.random() < 0.5 ? 1 : -1);
-    const slideX   = slideDir * 160;
     this.tweens.add({
-      targets: this._defPos, x: slideX, y: 260,
-      duration: 320, ease: 'Power2',
+      targets: this._defPos, x: slideDir * 180, y: 224,
+      duration: 340, ease: 'Power2',
       onComplete: () => this.tweens.add({
         targets: this._defPos, x: 0, y: 314,
-        duration: 580, delay: 500, ease: 'Sine.easeInOut',
+        duration: 700, delay: 600, ease: 'Sine.easeInOut',
       }),
     });
   }
@@ -584,12 +624,12 @@ class BasketballScene extends Phaser.Scene {
 
     const rows = [
       { label: 'OFFENSE',   color: '#ff8844' },
-      { key: '← / →',     action: 'Crossover  —  time against steal → Blow-by!' },
-      { key: '↓ / S',     action: 'Spin move  —  also beats steal attempts' },
+      { key: '← / →',     action: 'Crossover — react when defender FLASHES & lunges!' },
+      { key: '↓ / S',     action: 'Spin move — also beats steal attempts' },
       { key: 'SPACE',      action: 'Hold to charge shot, release in green zone' },
       { label: 'DEFENSE',  color: '#44aaff' },
-      { key: 'SPACE / F',  action: 'Steal  —  press when STEAL WINDOW flashes!' },
-      { key: '↑ / W',     action: "Contest  —  press during CPU's shot arc" },
+      { key: 'SPACE / F',  action: 'Steal — press when STEAL WINDOW flashes!' },
+      { key: '↑ / W',     action: "Contest — press during CPU's shot arc" },
     ];
 
     let cy = top + 98;
@@ -700,18 +740,27 @@ class BasketballScene extends Phaser.Scene {
   update(time, delta) {
     if (this.state === 'menu' || this.state === 'match_end') return;
 
-    const dt = delta / 1000;
+    // ── Fixed logic ticks (60 Hz) ─────────────────────────────────────────────
+    // Game logic runs at a fixed rate so timing windows are consistent
+    // regardless of render FPS (separates physics/logic from rendering).
+    this._logicAccum += delta / 1000;
+    while (this._logicAccum >= this.LOGIC_DT) {
+      this._logicTick(this.LOGIC_DT);
+      this._logicAccum -= this.LOGIC_DT;
+    }
 
+    // ── Render update (every frame) ───────────────────────────────────────────
     this._drawDefender();
-
-    if (this.state === 'offense')  this._updateOffense(dt);
-    else if (this.state === 'defense')  this._updateDefense(dt);
-    else if (this.state === 'shot_arc') this._updateBallArc(dt);
-    // 'result' state: just waits for delayedCall
-
-    this._updateVisuals(dt);
+    this._updateVisuals(delta / 1000);
     this._updateBallSprite();
     this._updateHUD();
+  }
+
+  _logicTick(dt) {
+    if (this.state === 'offense')        this._updateOffense(dt);
+    else if (this.state === 'defense')   this._updateDefense(dt);
+    else if (this.state === 'shot_arc')  this._updateBallArc(dt);
+    // 'result' state: just waits for delayedCall
   }
 
   // ── Offense ──────────────────────────────────────────────────────────────────
@@ -760,12 +809,6 @@ class BasketballScene extends Phaser.Scene {
     if (this._crossoverTimer > 0 && (this._crossoverTimer -= dt) <= 0) this._crossoverDir = 0;
     if (this._spinTimer     > 0 && (this._spinTimer     -= dt) <= 0) this._spinActive = false;
 
-    // Free lateral movement (held keys) — clamped to court width
-    if (!this._charging) {
-      const MOVE_SPEED = 190;
-      if (this._keys.left.isDown)  this._playerX = Math.max(160, this._playerX - MOVE_SPEED * dt);
-      if (this._keys.right.isDown) this._playerX = Math.min(640, this._playerX + MOVE_SPEED * dt);
-    }
   }
 
   _triggerStealAttempt() {
@@ -773,13 +816,14 @@ class BasketballScene extends Phaser.Scene {
     this._stealWarnActive = true;
     this._stealWarnTimer  = 0.44;
     this._stealWarnText.setVisible(true);
+    // Defender lunges very close — Z-axis lunge makes them loom large
     this.tweens.add({
-      targets: this._defPos, y: 372, duration: 260, ease: 'Power2',
+      targets: this._defPos, y: 432, duration: 320, ease: 'Power2.easeIn',
     });
     this.tweens.add({
       targets: this._stealWarnText,
-      alpha: { from: 1, to: 0.2 },
-      duration: 150, yoyo: true, repeat: 4,
+      alpha: { from: 1, to: 0.15 },
+      duration: 120, yoyo: true, repeat: 5,
     });
   }
 
@@ -1019,14 +1063,14 @@ class BasketballScene extends Phaser.Scene {
   _updateVisuals(dt) {
     this._dribblePhase = (this._dribblePhase + dt * 6.5) % (Math.PI * 2);
 
-    // Move player sprites to current _playerX
-    this._pLayers().forEach(s => s.setPosition(this._playerX, this.PLY));
+    // Player always centered — this is a state-machine game, not positional
+    this._pLayers().forEach(s => s.setPosition(this.W / 2, this.PLY));
 
     // Ball dribble position (while not arcing)
     if (this.state !== 'shot_arc') {
       if (this.state === 'offense') {
-        const sway = this._crossoverDir * 18 * Math.max(0, this._crossoverTimer / 0.42);
-        this._ballX = this._playerX + 18 + sway;
+        const sway = this._crossoverDir * 20 * Math.max(0, this._crossoverTimer / 0.42);
+        this._ballX = this.W / 2 + 18 + sway;
         this._ballY = this.PLY - 18 - Math.abs(Math.sin(this._dribblePhase)) * 22;
       } else if (this.state === 'defense') {
         this._ballX = this.W / 2 + this._defPos.x + 16;
@@ -1034,22 +1078,20 @@ class BasketballScene extends Phaser.Scene {
       }
     }
 
-    // Player frame selection
+    // Player frame selection (animation state machine)
     const now = Date.now();
     let fi;
-    const moving = this._keys.left?.isDown || this._keys.right?.isDown;
-    if (this._spinActive)            fi = Math.floor(now / 55) % 4 + 12;
-    else if (this._crossoverDir < 0) fi = Math.floor(now / 75) % 4 + 4;
-    else if (this._crossoverDir > 0) fi = Math.floor(now / 75) % 4 + 8;
-    else if (moving)                 fi = Math.floor(now / 110) % 4 + 8;
-    else                             fi = Math.floor(now / 220) % 4 + 8; // idle bob
+    if (this._spinActive)            fi = Math.floor(now / 55) % 4 + 12;  // spin: walk-up frames
+    else if (this._crossoverDir < 0) fi = Math.floor(now / 70) % 4 + 4;   // crossover left
+    else if (this._crossoverDir > 0) fi = Math.floor(now / 70) % 4 + 8;   // crossover right
+    else                             fi = Math.floor(now / 220) % 4 + 8;   // idle dribble
     this._pFrame(fi);
 
-    // Player alpha
-    const baseAlpha = this.state === 'defense' ? 0.60 : 0.88;
+    // Player transparency — 50% so the defender is always visible through them
+    const now2 = Date.now();
     this._pAlpha(this._spinActive
-      ? 0.28 + Math.abs(Math.sin(now / 38)) * 0.58
-      : baseAlpha);
+      ? 0.25 + Math.abs(Math.sin(now2 / 38)) * 0.35   // flicker during spin
+      : 0.50);                                          // always semi-transparent
 
     // Player squish on crossover
     if (this._crossoverDir !== 0 && this._crossoverTimer > 0) {

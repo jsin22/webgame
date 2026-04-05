@@ -44,16 +44,20 @@ class CasinoLobbyScene extends Phaser.Scene {
     }).setOrigin(0.5);
 
     // ── Game buttons ──────────────────────────────────────────────────────────
-    this._makeButton(W / 2 - 130, H / 2 + 60, 'ROULETTE', 0x8b1a1a, 0xff4444, () => {
+    this._makeButton(W / 2 - 145, H / 2 + 30, 'ROULETTE', 0x8b1a1a, 0xff4444, () => {
       this.scene.start('RouletteScene');
     });
 
-    this._makeButton(W / 2 + 130, H / 2 + 60, 'BLACKJACK', 0x1a1a6a, 0x4444ff, () => {
+    this._makeButton(W / 2 + 145, H / 2 + 30, 'BLACKJACK', 0x1a1a6a, 0x4444ff, () => {
       this.scene.start('BlackjackScene');
     });
 
+    this._makeButton(W / 2, H / 2 + 105, '3 CARD MONTE', 0x5a1a3a, 0xcc4488, () => {
+      this.scene.start('MonteScene');
+    });
+
     // ── Exit button ───────────────────────────────────────────────────────────
-    this._makeButton(W / 2, H - 60, 'EXIT CASINO', 0x3a3a3a, 0x888888, () => {
+    this._makeButton(W / 2, H - 52, 'EXIT CASINO', 0x3a3a3a, 0x888888, () => {
       this._exitCasino();
     });
 

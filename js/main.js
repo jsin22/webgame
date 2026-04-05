@@ -18,7 +18,7 @@ const config = {
       debug:   false,          // set true to see hitboxes while developing
     },
   },
-  scene: [BootScene, GameScene, CasinoLobbyScene, RouletteScene, BlackjackScene, BasketballScene, PizzeriaScene, HomeScene],
+  scene: [BootScene, GameScene, CasinoLobbyScene, RouletteScene, BlackjackScene, MonteScene, BasketballScene, PizzeriaScene, DinerScene, HomeScene],
 };
 
 const game = new Phaser.Game(config);

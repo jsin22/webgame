@@ -29,7 +29,6 @@ logging.getLogger('werkzeug').setLevel(logging.WARNING)
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading',
-                    allow_upgrades=False,
                     ping_interval=10, ping_timeout=5)
 
 # ── World clock ────────────────────────────────────────────────────────────────

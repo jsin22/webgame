@@ -290,6 +290,29 @@ class GameScene extends Phaser.Scene {
       this._refreshHUD();
     }, this);
 
+    // ── Diner entrance ────────────────────────────────────────────────────────
+    const dinerObj = map.findObject('objects', o => o.name === 'diner_entrance');
+    if (dinerObj) {
+      this.dinerEntrancePos = {
+        x: dinerObj.x + dinerObj.width  / 2,
+        y: dinerObj.y + dinerObj.height / 2,
+      };
+    }
+    this.dinerActive = false;
+
+    this.dinerPrompt = this.add.text(0, 0, 'Press E to enter Diner', {
+      fontFamily: 'Courier New', fontSize: '12px', color: '#ff6633',
+      stroke: '#000000', strokeThickness: 3,
+      backgroundColor: '#00000066', padding: { x: 6, y: 3 },
+    }).setOrigin(0.5, 1).setDepth(5).setVisible(false);
+
+    this.game.events.on('dinerExit', () => {
+      this.dinerActive = false;
+      document.getElementById('hud').style.display = '';
+      if (this.player) this.player.y += 80;
+      this._refreshHUD();
+    }, this);
+
     // ── World clock (BUG-001) ─────────────────────────────────────────────────
     // Time is now server-authoritative. world_tick fires every real second.
     if (window.socket) {
@@ -380,7 +403,7 @@ class GameScene extends Phaser.Scene {
     }
 
     // ── Pizzeria entrance proximity ───────────────────────────────────────────
-    if (this.pizzeriaEntrancePos && !this.pizzeriaActive && !this.casinoActive) {
+    if (this.pizzeriaEntrancePos && !this.pizzeriaActive && !this.casinoActive && !this.dinerActive) {
       const dx   = this.player.x - this.pizzeriaEntrancePos.x;
       const dy   = this.player.y - this.pizzeriaEntrancePos.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
@@ -396,7 +419,7 @@ class GameScene extends Phaser.Scene {
     }
 
     // ── Gym entrance proximity ────────────────────────────────────────────────
-    if (this.gymEntrancePos && !this.gymActive && !this.casinoActive && !this.pizzeriaActive && !this.homeActive) {
+    if (this.gymEntrancePos && !this.gymActive && !this.casinoActive && !this.pizzeriaActive && !this.homeActive && !this.dinerActive) {
       const dx   = this.player.x - this.gymEntrancePos.x;
       const dy   = this.player.y - this.gymEntrancePos.y;
       const near = Math.sqrt(dx * dx + dy * dy) < 80;
@@ -411,7 +434,7 @@ class GameScene extends Phaser.Scene {
     }
 
     // ── Home entrance proximity ───────────────────────────────────────────────
-    if (this.homeEntrancePos && !this.homeActive && !this.casinoActive && !this.pizzeriaActive && !this.gymActive) {
+    if (this.homeEntrancePos && !this.homeActive && !this.casinoActive && !this.pizzeriaActive && !this.gymActive && !this.dinerActive) {
       const dx   = this.player.x - this.homeEntrancePos.x;
       const dy   = this.player.y - this.homeEntrancePos.y;
       const near = Math.sqrt(dx * dx + dy * dy) < 80;
@@ -422,6 +445,21 @@ class GameScene extends Phaser.Scene {
 
       if (near && Phaser.Input.Keyboard.JustDown(this.inputKeys.e)) {
         this._enterHome();
+      }
+    }
+
+    // ── Diner entrance proximity ──────────────────────────────────────────────
+    if (this.dinerEntrancePos && !this.dinerActive && !this.casinoActive && !this.pizzeriaActive && !this.gymActive && !this.homeActive) {
+      const dx   = this.player.x - this.dinerEntrancePos.x;
+      const dy   = this.player.y - this.dinerEntrancePos.y;
+      const near = Math.sqrt(dx * dx + dy * dy) < 80;
+
+      this.dinerPrompt
+        .setVisible(near)
+        .setPosition(this.player.x, this.player.y - 44);
+
+      if (near && Phaser.Input.Keyboard.JustDown(this.inputKeys.e)) {
+        this._enterDiner();
       }
     }
 
@@ -850,6 +888,16 @@ class GameScene extends Phaser.Scene {
     this._hidePlayerMenu();
     this.scene.pause();
     this.scene.launch('PizzeriaScene');
+  }
+
+  _enterDiner() {
+    this.dinerActive = true;
+    this.dinerPrompt.setVisible(false);
+    this.player.setVelocity(0, 0);
+    document.getElementById('hud').style.display = 'none';
+    this._hidePlayerMenu();
+    this.scene.pause();
+    this.scene.launch('DinerScene');
   }
 
   _enterCasino() {

@@ -69,13 +69,13 @@ const _DS = (() => {
     EVENTS, WEATHER_MULT, BASE_PRICE, FRESH_MAX,
 
     // ── Roll new day variables ────────────────────────────────────────────────
-    rollDay() {
+    rollDay(forceEvent = null) {
       this.day++;
       const wList  = ['Clear','Clear','Clear','Rain','Rain','Snow','Heat'];
       this.weather = wList[Math.floor(Math.random() * wList.length)];
-      this.event   = EVENTS[Math.floor(Math.random() * EVENTS.length)];
+      this.event   = forceEvent || this.EVENTS[Math.floor(Math.random() * this.EVENTS.length)];
       this._prices = {};
-      for (const [k, [lo, hi]] of Object.entries(BASE_PRICE)) {
+      for (const [k, [lo, hi]] of Object.entries(this.BASE_PRICE)) {
         let p = lo + Math.random() * (hi - lo);
         if (this.event.boost[k]) p *= this.event.boost[k];
         this._prices[k] = Math.round(p * 10) / 10;

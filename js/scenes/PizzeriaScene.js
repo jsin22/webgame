@@ -290,7 +290,8 @@ class PizzeriaScene extends Phaser.Scene {
 
   _startAssembly() {
     this._clear();
-    this._setEsc(null);
+    this._setEsc(() => this._exit());   // ESC always works during assembly
+    this._binRects = {};                // name → { rect, txt }
     this._bg();
     this._title('🍕  BUILD THE PIZZA FROM MEMORY');
 
@@ -301,37 +302,33 @@ class PizzeriaScene extends Phaser.Scene {
       W / 2, 68, { size: '11px', color: '#556677' }
     );
 
-    // Pizza display (persistent — not in _elements list yet, we'll add below)
     this._pizzaG = this.add.graphics();
     this._track(this._pizzaG);
     this._drawPizza();
 
-    // Progress + feedback
     this._progressText = this._text(
       `Added: ${this._buildList.length}`, W / 2, 332, { color: '#888', size: '12px' });
     this._feedbackText = this._text('', W / 2, 358, { size: '15px', color: '#55ff88' });
 
     // ── Ingredient bins (2 rows of 4) ──────────────────────────────────────────
-    const binW = 90, binH = 38, hGap = 10, vGap = 8;
-    const cols = 4;
+    const binW = 90, binH = 38, hGap = 10, vGap = 8, cols = 4;
     const startX = W / 2 - (cols / 2 - 0.5) * (binW + hGap);
 
     _ALL_BINS.forEach((ing, i) => {
-      const col    = i % cols;
-      const row    = Math.floor(i / cols);
-      const bx     = startX + col * (binW + hGap);
-      const by     = 400 + row * (binH + vGap);
+      const bx     = startX + (i % cols) * (binW + hGap);
+      const by     = 400 + Math.floor(i / cols) * (binH + vGap);
       const placed = this._buildList.includes(ing);
       const c      = _ING[ing].color;
 
       const rect = this._track(
         this.add.rectangle(bx, by, binW, binH, placed ? 0x111111 : 0x1a1a1a)
           .setStrokeStyle(2, placed ? 0x333333 : c)
-          .setInteractive(placed ? {} : { useHandCursor: true })
+          .setInteractive({ useHandCursor: !placed })
       );
       const txt = this._text(ing, bx, by, {
         size: '11px', color: placed ? '#444' : '#ffffff',
       });
+      this._binRects[ing] = { rect, txt };
 
       if (!placed) {
         rect.on('pointerover',  () => rect.setFillStyle(0x2a2a2a));
@@ -341,7 +338,6 @@ class PizzeriaScene extends Phaser.Scene {
       }
     });
 
-    // ── Buttons ────────────────────────────────────────────────────────────────
     this._button(W / 2 + 60, H - 48, 'DONE BUILDING ▶', 0x0a2a0a, 0x1a4a1a,
       () => this._startSlicing(), 190, 36);
     this._button(70, H - 48, 'QUIT', 0x2a2a2a, 0x444444, () => this._exit(), 110, 34);
@@ -356,16 +352,11 @@ class PizzeriaScene extends Phaser.Scene {
 
     let msg, color;
     if (!this._order.ingredients.includes(name)) {
-      // Wrong ingredient
-      msg   = `✗ ${name} — not on order!`;
-      color = '#ff4444';
+      msg = `✗ ${name} — not on order!`;  color = '#ff4444';
     } else if (thisLayer < currentMaxLayer) {
-      // Layer violation: e.g. sauce after cheese
-      msg   = `✗ Messy pizza! Wrong order!`;
-      color = '#ff8800';
+      msg = '✗ Messy pizza! Wrong order!'; color = '#ff8800';
     } else {
-      msg   = `✓ ${name}`;
-      color = '#55ff88';
+      msg = `✓ ${name}`;                  color = '#55ff88';
     }
 
     this._buildList.push(name);
@@ -374,9 +365,15 @@ class PizzeriaScene extends Phaser.Scene {
     if (this._feedbackText?.active) this._feedbackText.setText(msg).setColor(color);
     if (this._progressText?.active) this._progressText.setText(`Added: ${this._buildList.length}`);
 
-    // Defer rebuild — destroying the clicked rect during its own event callback freezes Phaser.
-    // Short delay lets the event handler return before _clear() runs.
-    this.time.delayedCall(500, () => this._startAssembly());
+    // Gray out this bin in-place — no full scene rebuild, avoids destroying
+    // the rect while still inside its own pointerup callback.
+    const bin = this._binRects?.[name];
+    if (bin?.rect?.active) {
+      bin.rect.removeAllListeners();
+      bin.rect.setFillStyle(0x111111).setStrokeStyle(2, 0x333333).setAlpha(1);
+      bin.rect.disableInteractive();
+    }
+    if (bin?.txt?.active) bin.txt.setColor('#444');
   }
 
   // ════════════════════════════════════════════════════════════════════════════

@@ -57,28 +57,27 @@ const GameState = {
 
   // ── Methods ────────────────────────────────────────────────────────────────
 
+  /** Emit a Phaser game event if the game instance is available. */
+  _emit(event, value) {
+    if (window._phaserGame) window._phaserGame.events.emit(event, value);
+  },
+
   /** Add (positive) or subtract (negative) money; floor at 0. */
   addMoney(amount) {
     this.money = Math.max(0, this.money + amount);
-    if (window._phaserGame) {
-      window._phaserGame.events.emit('moneyChanged', this.money);
-    }
+    this._emit('moneyChanged', this.money);
   },
 
   /** Restore (positive) or reduce HP; clamped to [0, maxHp]. */
   addHp(amount) {
     this.hp = Math.min(this.maxHp, Math.max(0, this.hp + amount));
-    if (window._phaserGame) {
-      window._phaserGame.events.emit('hpChanged', this.hp);
-    }
+    this._emit('hpChanged', this.hp);
   },
 
   /** Restore (positive) or reduce energy; clamped to [0, maxEnergy]. */
   addEnergy(amount) {
     this.energy = Math.min(this.maxEnergy, Math.max(0, this.energy + amount));
-    if (window._phaserGame) {
-      window._phaserGame.events.emit('energyChanged', this.energy);
-    }
+    this._emit('energyChanged', this.energy);
   },
 
   /**
@@ -92,9 +91,7 @@ const GameState = {
       this.hour  = this.hour % 24;
     }
     this._updateRank();
-    if (window._phaserGame) {
-      window._phaserGame.events.emit('timeChanged', { hour: this.hour, minute: this.minute, day: this.day });
-    }
+    this._emit('timeChanged', { hour: this.hour, minute: this.minute, day: this.day });
   },
 
   _updateRank() {
@@ -111,9 +108,7 @@ const GameState = {
     this.hour   = tick.hour;
     this.minute = tick.minute;
     this.day    = tick.day;
-    if (window._phaserGame) {
-      window._phaserGame.events.emit('timeChanged', { hour: this.hour, minute: this.minute, day: this.day });
-    }
+    this._emit('timeChanged', { hour: this.hour, minute: this.minute, day: this.day });
 
     // Energy passive decay: 0.066E per game-minute (95E lost over 1,440 min)
     if (!this._restingAtHome) {
@@ -141,8 +136,6 @@ const GameState = {
     this.hour   = tick.hour;
     this.minute = tick.minute;
     this.day    = tick.day;
-    if (window._phaserGame) {
-      window._phaserGame.events.emit('timeChanged', { hour: this.hour, minute: this.minute, day: this.day });
-    }
+    this._emit('timeChanged', { hour: this.hour, minute: this.minute, day: this.day });
   },
 };

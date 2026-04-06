@@ -371,18 +371,12 @@ class PizzeriaScene extends Phaser.Scene {
     this._buildList.push(name);
     this._drawPizza();
 
-    if (this._feedbackText?.active) {
-      this._feedbackText.setText(msg).setColor(color);
-      this.time.delayedCall(900, () => {
-        if (this._feedbackText?.active) this._feedbackText.setText('');
-      });
-    }
-    if (this._progressText?.active) {
-      this._progressText.setText(`Added: ${this._buildList.length}`);
-    }
+    if (this._feedbackText?.active) this._feedbackText.setText(msg).setColor(color);
+    if (this._progressText?.active) this._progressText.setText(`Added: ${this._buildList.length}`);
 
-    // Rebuild bins to gray out this ingredient
-    this._startAssembly();
+    // Defer rebuild — destroying the clicked rect during its own event callback freezes Phaser.
+    // Short delay lets the event handler return before _clear() runs.
+    this.time.delayedCall(500, () => this._startAssembly());
   }
 
   // ════════════════════════════════════════════════════════════════════════════

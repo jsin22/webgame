@@ -1,1084 +1,1251 @@
 /**
- * BasketballScene — "Buzzer Beater Gauntlet"
+ * BasketballScene — "Pro-Hoops Duel"
  *
- * Side-scrolling auto-runner. Navigate obstacles → enter Shot Zone →
- * execute Double-Apex meter shot → push back the Crush Wall.
+ * 1-on-1 behind-the-back basketball with pseudo-3D vanishing-point court.
  *
- * Controls:
- *   W / Up    — Jump  (clear LOW obstacles)
- *   Shift / D — Crossover dash (pass under HIGH obstacles)
- *   S / Down  — Spin move (30 frames i-frames, pass through DEFENDERS)
- *   Space     — Hold → lock Power, Release → lock Aim (in shot zone)
- *   ESC       — Leave
+ * OFFENSE  ← / →  Crossover  (time against steal → Blow-by)
+ *          ↓ / S  Spin move   (also beats steal attempts)
+ *          SPACE  Hold to charge shot, release in green zone
+ * DEFENSE  SPACE  Steal attempt — press when STEAL WINDOW flashes
+ *          ↑ / W  Contest/block — press during CPU's shot arc
+ * ESC — leave gym
  */
-class BasketballScene extends Phaser.Scene {
-  constructor() {
-    super({ key: 'BasketballScene' });
-  }
 
-  // ── Create ─────────────────────────────────────────────────────────────────
+// Persistent state across gym visits
+const _BB = (() => ({ level: 0 }))();
+
+const BB_OPPONENTS = [
+  { name: 'Rookie',   reactionMs: 800, stealFreq: 0.055, shotAcc: 0.28 },
+  { name: 'Hustler',  reactionMs: 560, stealFreq: 0.14,  shotAcc: 0.44 },
+  { name: 'Pro',      reactionMs: 370, stealFreq: 0.27,  shotAcc: 0.58 },
+  { name: 'All-Star', reactionMs: 230, stealFreq: 0.44,  shotAcc: 0.72 },
+  { name: 'Legend',   reactionMs: 100, stealFreq: 0.70,  shotAcc: 0.90 },
+];
+
+const BB_WIN = 5;  // baskets to win a match
+
+class BasketballScene extends Phaser.Scene {
+  constructor() { super({ key: 'BasketballScene' }); }
+
+  // ── Create ──────────────────────────────────────────────────────────────────
 
   create() {
-    this.W = this.scale.width;   // 800
-    this.H = this.scale.height;  // 560
+    const W = this.W = this.scale.width;    // 800
+    const H = this.H = this.scale.height;   // 560
 
-    this.GROUND_Y      = this.H - 70;   // 490 — where player feet land
-    this.PLAYER_SPEED  = 130;
-    this.SECTION_LEN   = 1500;
-    this.WORLD_W       = 500000;
+    this.physics.world.gravity.y = 0;
 
-    this.physics.world.gravity.y = 800;
-    this.physics.world.setBounds(0, 0, this.WORLD_W, this.H);
+    // Court geometry
+    this.VP           = { x: W / 2, y: 182 };  // vanishing point
+    this.BY           = 548;                     // court bottom y
+    this.RX           = W / 2;                   // rim x
+    this.RY           = 152;                     // rim y (high above defender)
+    this.PLY          = 454;                     // player sprite center y
+    this.PLAYER_SCALE = 1.55;                    // player sprite scale
+    this.DEF_SCALE    = 0.75;                    // defender draw scale multiplier
 
-    // ── State machine ────────────────────────────────────────────────────────
-    this.ST_MENU    = 'menu';
-    this.ST_RUNNING = 'running';
-    this.ST_LOCKED  = 'locked';
-    this.ST_REBOUND = 'rebound';
-    this.state      = this.ST_MENU;
+    // Match
+    this.playerScore = 0;
+    this.aiScore     = 0;
+    this.possession  = 'player';
+    this.state       = 'menu';
 
-    // ── Game vars ────────────────────────────────────────────────────────────
-    this.hoopsScored       = 0;
-    this.consecutiveGreens = 0;
-    this.heatCheck         = false;
-    this.wallScaleFactor   = 1.0;
-    this.wallSpeed         = this.PLAYER_SPEED * 0.85;
+    // Offense vars
+    this.openness          = 0.28;
+    this._charging         = false;
+    this._chargeVal        = 0;
+    this._stealWarnActive  = false;
+    this._stealWarnTimer   = 0;
+    this._stealDodgeActive = false;
+    this._stealDodgeTimer  = 0;
+    this._nextStealTimer   = 0;
+    this._crossoverDir     = 0;
+    this._crossoverTimer   = 0;
+    this._spinActive       = false;
+    this._spinTimer        = 0;
 
-    this._stunTimer      = 0;
-    this._reboundTimer   = 0;
-    this._spinFrames     = 0;
-    this._crossover      = false;
-    this._crossoverTimer = 0;     // counts down while crossover is active
-    this._crossoverDur   = 0.38;  // total duration of one crossover move (seconds)
-    this._isOnGround     = false;
+    // Defense vars
+    this._switchWindowActive = false;
+    this._switchWindowTimer  = 0;
+    this._nextSwitchTimer    = 0;
+    this._aiShootTimer       = 0;
+    this._arcContested       = false;
 
-    this._meterPhase = 0;   // 0=off, 1=power, 2=aim
-    this._meterTime  = 0;
-    this._powerVal   = 0;
-    this._aimVal     = 0;
+    // Defender animated position (tweened via plain object)
+    this._defPos = { y: 314, x: 0 };  // x is lateral offset from center
 
-    this._obstacles    = [];    // { x, type, hit }
-    this._shotZones    = [];    // { x, hoopX, hoopY, triggered }
-    this._activeHoop   = null;
-    this._nextSectionX = 0;    // world-x where next section begins
-    this._savedWallSpeed = 0;
+    // Player x position (moves left/right on court during offense)
+    this._playerX = W / 2;
+
+    // Player depth (0 = at baseline, 1 = advanced near hoop/defender)
+    this._playerDepth    = 0;
+    this._pastDefender   = false;   // true after crossover/spin beats defender
+    this._pastDefenderTimer = 0;
+
+    // Smoothed display positions (lerp toward logical targets each render frame)
+    this._playerDispX     = W / 2;
+    this._playerDispDepth = 0;
+
+    // Ball arc
+    this._ballArcT         = 0;
+    this._ballArcDur       = 1;
+    this._ballArcSx        = 0; this._ballArcSy = 0;
+    this._ballArcCx        = 0; this._ballArcCy = 0;
+    this._ballArcEx        = 0; this._ballArcEy = 0;
+    this._ballArcForPlayer = true;
+    this._ballArcMade      = false;
+
+    // Ball display position
+    this._ballX      = W / 2 + 18;
+    this._ballY      = this.PLY - 20;
+    this._dribblePhase = 0;
+
+    // Fixed-logic accumulator — game logic runs at 60 Hz regardless of render FPS
+    // This keeps timing windows (steal reactions) consistent across frame rates.
+    this._logicAccum = 0;
+    this.LOGIC_DT    = 1 / 60;
 
     this._buildTextures();
-    this._buildBackground();
-    this._buildGround();
+    this._drawBg();
+    this._drawCourt();
+    this._drawHoop();
     this._buildPlayer();
-    this._buildWall();
+    this._buildDefender();
+    this._buildBall();
     this._buildHUD();
     this._buildMeterUI();
     this._setupInput();
 
-    this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
-    this.cameras.main.setBounds(0, 0, this.WORLD_W, this.H);
-
-    this._spawnSection(0);
-
-    this._showStartMenu();
+    // Only guests can play — registered players see the under-construction notice
+    if (window.characterData?.guest) {
+      this._showMenu();
+    } else {
+      this._showUnderConstruction();
+    }
   }
 
-  // ── Start Menu ────────────────────────────────────────────────────────────
-
-  _showStartMenu() {
+  _showUnderConstruction() {
     const W = this.W, H = this.H;
-    const sf = 0, depth = 50;
+    const sf = 0, d = 50;
+    const cx = W / 2, cy = H / 2;
 
-    this._menuContainer = this.add.container(0, 0).setScrollFactor(sf).setDepth(depth);
+    this.add.rectangle(cx, cy, W, H, 0x000000, 0.85).setScrollFactor(sf).setDepth(d);
+    this.add.rectangle(cx, cy, 420, 220, 0x0a0810, 0.97)
+      .setStrokeStyle(2, 0x554422).setScrollFactor(sf).setDepth(d);
 
-    // Dim overlay
-    const overlay = this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.82).setScrollFactor(sf);
-
-    // Panel — sized to fit in 800×560 with breathing room
-    const PW = 520, PH = 430;
-    const panel = this.add.rectangle(W / 2, H / 2, PW, PH, 0x080614, 0.97)
-      .setStrokeStyle(2, 0x4466cc).setScrollFactor(sf);
-    this.add.rectangle(W / 2, H / 2, PW - 10, PH - 10, 0x000000, 0)
-      .setStrokeStyle(1, 0x223355).setScrollFactor(sf);
-
-    const cx = W / 2;            // horizontal center
-    const top = H / 2 - PH / 2; // panel top y
-
-    // Title
-    const title = this.add.text(cx, top + 22, 'BUZZER BEATER GAUNTLET', {
-      fontFamily: 'Courier New', fontSize: '19px', color: '#ffdd44',
+    this.add.text(cx, cy - 68, '🚧', { fontSize: '38px' })
+      .setOrigin(0.5).setScrollFactor(sf).setDepth(d);
+    this.add.text(cx, cy - 20, 'UNDER CONSTRUCTION', {
+      fontFamily: 'Courier New', fontSize: '20px', color: '#ffaa33',
       stroke: '#000', strokeThickness: 4,
-    }).setOrigin(0.5).setScrollFactor(sf);
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(d);
+    this.add.text(cx, cy + 18, 'The gym is being renovated.\nCheck back soon!', {
+      fontFamily: 'Courier New', fontSize: '13px', color: '#887755',
+      align: 'center',
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(d);
 
-    const subtitle = this.add.text(cx, top + 46, 'Outrun the Titan — score hoops to push him back!', {
-      fontFamily: 'Courier New', fontSize: '11px', color: '#8899bb',
-    }).setOrigin(0.5).setScrollFactor(sf);
-
-    this.add.rectangle(cx, top + 60, PW - 20, 1, 0x334466).setScrollFactor(sf);
-
-    // Controls — two columns that fit inside the panel
-    const kx = cx - 230;  // key column (left-aligned)
-    const ax = cx - 80;   // action column
-    const controls = [
-      { key: '↑ / W',        color: '#88ffcc', action: 'Jump over benches (LOW)' },
-      { key: 'SHIFT / D',    color: '#ffdd88', action: 'Crossover under scoreboards (HIGH)' },
-      { key: '↓ / S',        color: '#ff88cc', action: 'Spin through defenders' },
-      { key: 'SPACE hold',   color: '#aaddff', action: 'Lock power (shot zone)' },
-      { key: 'SPACE release',color: '#aaddff', action: 'Lock aim & shoot' },
-      { key: 'ESC',          color: '#ff8866', action: 'Leave gym' },
-    ];
-
-    const ctrlItems = controls.map((c, i) => {
-      const y = top + 76 + i * 24;
-      const k = this.add.text(kx, y, c.key, {
-        fontFamily: 'Courier New', fontSize: '12px', color: c.color,
-        stroke: '#000', strokeThickness: 2,
-      }).setScrollFactor(sf);
-      const a = this.add.text(ax, y, c.action, {
-        fontFamily: 'Courier New', fontSize: '11px', color: '#99aabb',
-      }).setScrollFactor(sf);
-      return [k, a];
-    }).flat();
-
-    this.add.rectangle(cx, top + 228, PW - 20, 1, 0x334466).setScrollFactor(sf);
-
-    // Obstacle quick-reference
-    const legendHeader = this.add.text(kx, top + 236, 'OBSTACLES', {
-      fontFamily: 'Courier New', fontSize: '11px', color: '#aaddff',
-    }).setScrollFactor(sf);
-    const legend = [
-      { color: '#88ffcc', text: '▬  LOW bench — JUMP' },
-      { color: '#ffdd88', text: '▮  HIGH scoreboard — CROSSOVER (times its fall!)' },
-      { color: '#ff88cc', text: '◆  DEFENDER — SPIN' },
-    ];
-    const legendObjs = legend.map((l, i) => {
-      return this.add.text(kx, top + 254 + i * 20, l.text, {
-        fontFamily: 'Courier New', fontSize: '11px', color: l.color,
-      }).setScrollFactor(sf);
-    });
-
-    // Tip
-    const tip = this.add.text(cx, top + 330, '3 greens in a row = HEAT CHECK  (+600px pushback!)', {
-      fontFamily: 'Courier New', fontSize: '10px', color: '#445566',
-    }).setOrigin(0.5).setScrollFactor(sf);
-
-    // START button
-    const btnBg = this.add.rectangle(cx, top + 362, 190, 38, 0x113322)
-      .setStrokeStyle(2, 0x44cc66).setInteractive({ useHandCursor: true }).setScrollFactor(sf);
-    const btnTxt = this.add.text(cx, top + 362, 'START GAME', {
-      fontFamily: 'Courier New', fontSize: '15px', color: '#66ff88',
-      stroke: '#000', strokeThickness: 3,
-    }).setOrigin(0.5).setScrollFactor(sf);
-
-    btnBg.on('pointerover', () => btnBg.setFillStyle(0x1a4d33));
-    btnBg.on('pointerout',  () => btnBg.setFillStyle(0x113322));
-    btnBg.on('pointerup',   () => this._startGame());
-
-    const escTip = this.add.text(cx, top + 400, 'ESC — leave gym', {
-      fontFamily: 'Courier New', fontSize: '10px', color: '#664433',
-    }).setOrigin(0.5).setScrollFactor(sf);
-
-    this._menuContainer.add([overlay, panel, title, subtitle, ...ctrlItems,
-      legendHeader, ...legendObjs, tip, btnBg, btnTxt, escTip]);
-
-    // Keyboard shortcuts for menu
-    this.input.keyboard.once('keydown-ESC',   () => this._exit());
-    this.input.keyboard.once('keydown-ENTER', () => this._startGame());
-    this.input.keyboard.once('keydown-SPACE', () => this._startGame());
-  }
-
-  _startGame() {
-    if (this.state !== this.ST_MENU) return;
-    this._menuContainer.destroy();
-    this._menuContainer = null;
-    this.state = this.ST_RUNNING;
-    // Set up ESC to exit during gameplay
+    const btn = this.add.rectangle(cx, cy + 76, 130, 34, 0x1a0e04)
+      .setStrokeStyle(2, 0x886633).setInteractive({ useHandCursor: true })
+      .setScrollFactor(sf).setDepth(d);
+    this.add.text(cx, cy + 76, 'LEAVE GYM', {
+      fontFamily: 'Courier New', fontSize: '13px', color: '#cc9955',
+      stroke: '#000', strokeThickness: 2,
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(d);
+    btn.on('pointerover', () => btn.setFillStyle(0x2a1808));
+    btn.on('pointerout',  () => btn.setFillStyle(0x1a0e04));
+    btn.on('pointerup',   () => this._exit());
     this.input.keyboard.once('keydown-ESC', () => this._exit());
   }
 
-  // ── Textures ───────────────────────────────────────────────────────────────
+  // ── Textures ────────────────────────────────────────────────────────────────
 
   _buildTextures() {
-    const make = (key, w, h, fn) => {
-      if (this.textures.exists(key)) return;
+    if (!this.textures.exists('bb2_ball')) {
       const g = this.make.graphics({ add: false });
-      fn(g);
-      g.generateTexture(key, w, h);
-      g.destroy();
-    };
-
-    make('bball_px', 1, 1, g => { g.fillStyle(0xffffff); g.fillRect(0, 0, 1, 1); });
-
-    make('bball_ball', 26, 26, g => {
-      g.fillStyle(0xe86010);
-      g.fillCircle(13, 13, 13);
-      g.lineStyle(1.5, 0x992200);
-      g.strokeCircle(13, 13, 13);
-      g.lineBetween(13, 0, 13, 26);
-      g.lineBetween(0, 13, 26, 13);
+      g.fillStyle(0xe86010); g.fillCircle(13, 13, 13);
+      g.lineStyle(1.5, 0x992200); g.strokeCircle(13, 13, 13);
+      g.lineBetween(13, 0, 13, 26); g.lineBetween(0, 13, 26, 13);
       g.beginPath(); g.arc(13, 13, 8, 0.2 * Math.PI, 0.8 * Math.PI); g.strokePath();
       g.beginPath(); g.arc(13, 13, 8, 1.2 * Math.PI, 1.8 * Math.PI); g.strokePath();
-    });
-
-    make('bball_fire', 26, 26, g => {
-      g.fillStyle(0xff2200); g.fillCircle(13, 13, 13);
-      g.lineStyle(2, 0xffff00); g.strokeCircle(13, 13, 13);
-      g.lineStyle(2, 0xff8800);
-      g.lineBetween(13, 0, 13, 26); g.lineBetween(0, 13, 26, 13);
-    });
-
-    // Obstacle: LOW — bench/cooler on ground
-    make('bball_low', 52, 34, g => {
-      g.fillStyle(0x885522); g.fillRect(0, 0, 52, 34);
-      g.lineStyle(2, 0xffaa55); g.strokeRect(1, 1, 50, 32);
-      g.lineStyle(1, 0xffaa55);
-      g.lineBetween(17, 0, 17, 34);
-      g.lineBetween(34, 0, 34, 34);
-    });
-
-    // Obstacle: HIGH — scoreboard hanging from ceiling
-    make('bball_high', 52, 60, g => {
-      // Hang wire
-      g.fillStyle(0x666666); g.fillRect(24, 0, 4, 14);
-      // Board
-      g.fillStyle(0x223355); g.fillRect(0, 14, 52, 46);
-      g.lineStyle(2, 0x44aaff); g.strokeRect(1, 15, 50, 44);
-      g.fillStyle(0xffff44); g.fillRect(6, 20, 40, 25);  // screen glow
-    });
-
-    // Obstacle: DEFENDER — opposing player
-    make('bball_def', 24, 42, g => {
-      g.fillStyle(0xff3333); g.fillRect(4, 16, 16, 20);
-      g.fillStyle(0xf0c090); g.fillCircle(12, 10, 10);
-      g.fillStyle(0xcc2222); g.fillRect(4, 36, 7, 6);
-      g.fillRect(13, 36, 7, 6);
-    });
+      g.generateTexture('bb2_ball', 26, 26);
+      g.destroy();
+    }
   }
 
-  // ── Background ─────────────────────────────────────────────────────────────
+  // ── Court background ────────────────────────────────────────────────────────
 
-  _buildBackground() {
+  _drawBg() {
     const g = this.add.graphics();
-    const W = this.WORLD_W;
+    const W = this.W, vpy = this.VP.y;
 
-    // Arena dark background
-    g.fillStyle(0x0a0818); g.fillRect(0, 0, W, this.H);
+    // Arena ceiling
+    g.fillStyle(0x09051a); g.fillRect(0, 0, W, vpy);
+    // Crowd silhouette bands
+    g.fillStyle(0x14102a); g.fillRect(0, vpy, W, 28);
+    g.fillStyle(0x0f0c22); g.fillRect(0, vpy + 28, W, 16);
 
-    // Crowd area
-    g.fillStyle(0x12102a); g.fillRect(0, 0, W, this.H * 0.38);
-    g.lineStyle(2, 0x332266, 0.8);
-    g.lineBetween(0, this.H * 0.38, W, this.H * 0.38);
+    // Scoreboard hanging from ceiling
+    g.fillStyle(0x1a1430); g.fillRect(W / 2 - 72, 38, 144, 66);
+    g.lineStyle(2, 0x2a3460); g.strokeRect(W / 2 - 72, 38, 144, 66);
+    g.fillStyle(0x221c38); g.fillRect(W / 2 - 62, 48, 124, 50);
+    // Scoreboard light strip
+    g.fillStyle(0xff8800, 0.6);
+    for (let i = 0; i < 9; i++) g.fillCircle(W / 2 - 58 + i * 14.5, 104, 3);
 
-    // Hardwood floor strips
-    for (let y = this.GROUND_Y; y < this.H; y += 12) {
-      g.fillStyle(y % 24 === 0 ? 0x3d2110 : 0x331b0d);
-      g.fillRect(0, y, W, 12);
-    }
-
-    // Repeating court markings every 1500px
-    for (let sx = 0; sx < W; sx += this.SECTION_LEN) {
-      g.lineStyle(1.5, 0x6a4520, 0.4);
-      g.strokeCircle(sx + 750, this.GROUND_Y - 100, 110);
-      g.lineBetween(sx + 750 - 60, this.GROUND_Y, sx + 750 - 60, this.GROUND_Y - 10);
-      g.lineBetween(sx + 750 + 60, this.GROUND_Y, sx + 750 + 60, this.GROUND_Y - 10);
+    // Arena side lights
+    g.lineStyle(1, 0x333366, 0.4);
+    for (let x = 60; x < W; x += 130) {
+      g.lineBetween(x, vpy, x, vpy + 44);
     }
   }
 
-  // ── Ground ─────────────────────────────────────────────────────────────────
+  _drawCourt() {
+    const g = this.add.graphics();
+    const vpx = this.VP.x, vpy = this.VP.y;
+    const BY = this.BY, W = this.W;
 
-  _buildGround() {
-    this._ground = this.physics.add.staticImage(
-      this.WORLD_W / 2, this.GROUND_Y + 10, 'bball_px'
-    );
-    this._ground.setDisplaySize(this.WORLD_W, 20).refreshBody().setAlpha(0);
+    // perspX: x at y on the line from (x0, BY) toward VP
+    const perspX = (x0, y) => x0 + (vpx - x0) * (BY - y) / (BY - vpy);
+
+    // Floor gradient strips (dark near VP, lighter near bottom)
+    for (let y = vpy + 44; y < BY; y += 13) {
+      const t = (y - vpy) / (BY - vpy);
+      const r = Math.round(0x14 + t * (0x38 - 0x14));
+      const gg = Math.round(0x09 + t * (0x1d - 0x09));
+      const b  = Math.round(0x03 + t * (0x07 - 0x03));
+      g.fillStyle((r << 16) | (gg << 8) | b);
+      g.fillRect(0, y, W, 13);
+    }
+
+    // Perspective floor lines (vertical, every 62px)
+    g.lineStyle(1, 0x5a3810, 0.36);
+    for (let bx = 0; bx <= W; bx += 62) {
+      g.lineBetween(bx, BY, perspX(bx, vpy + 6), vpy + 6);
+    }
+
+    // Horizontal court lines
+    g.lineStyle(1.5, 0x6a4618, 0.5);
+    for (const hy of [438, 368, 300, 240]) {
+      g.lineBetween(perspX(0, hy), hy, perspX(W, hy), hy);
+    }
+
+    // Key / paint trapezoid (half-width = 116 at bottom)
+    const KW = 116;
+    g.lineStyle(2, 0x7a5820, 0.65);
+    g.lineBetween(perspX(vpx - KW, BY), BY, perspX(vpx - KW, 242), 242);
+    g.lineBetween(perspX(vpx + KW, BY), BY, perspX(vpx + KW, 242), 242);
+    g.lineBetween(perspX(vpx - KW, 242), 242, perspX(vpx + KW, 242), 242);
+    g.lineBetween(perspX(vpx - KW, BY), BY, perspX(vpx + KW, BY), BY);
+
+    // Free throw arc
+    g.lineStyle(1.5, 0x7a5820, 0.52);
+    g.strokeEllipse(vpx, 300, 118, 38);
+
+    // Three-point arc
+    g.strokeEllipse(vpx, 390, 528, 185);
   }
 
-  // ── Player ─────────────────────────────────────────────────────────────────
+  // ── Hoop ────────────────────────────────────────────────────────────────────
+
+  _drawHoop() {
+    const g = this.add.graphics().setDepth(2);
+    const rx = this.RX, ry = this.RY;
+
+    // Backboard
+    g.fillStyle(0xe8e8d0);
+    g.fillRect(rx - 46, ry - 66, 92, 54);
+    g.lineStyle(2, 0x888877);
+    g.strokeRect(rx - 46, ry - 66, 92, 54);
+    g.lineStyle(2, 0xdd2222, 0.9);
+    g.strokeRect(rx - 24, ry - 44, 48, 30);
+
+    // Rim (ellipse for 3D look)
+    g.lineStyle(5, 0xff5500);
+    g.strokeEllipse(rx, ry + 4, 46, 16);
+
+    // Net
+    g.lineStyle(1, 0xddddaa, 0.65);
+    for (let i = 0; i <= 5; i++) {
+      const nx = rx - 22 + 44 / 5 * i;
+      g.lineBetween(nx, ry + 4, nx + (i - 2.5) * 3.5, ry + 36);
+    }
+    for (let j = 1; j <= 3; j++) {
+      const ny = ry + 4 + 32 * j / 3;
+      g.lineBetween(rx - 22 + j * 2, ny, rx + 22 - j * 2, ny);
+    }
+
+    // Floor target ring under hoop
+    g.lineStyle(1, 0x334466, 0.3);
+    g.strokeEllipse(rx, this.BY - 2, 48, 18);
+  }
+
+  // ── Player sprite ────────────────────────────────────────────────────────────
 
   _buildPlayer() {
-    // Spawn y: body.bottom lands at GROUND_Y using offset 22 on a 48px-tall sprite
-    const spawnY = this.GROUND_Y - 22;   // body.bottom = spawnY + 22 = GROUND_Y
-    const cd     = window.characterData || {};
-    const t      = hex => parseInt((hex || '#ffffff').replace('#', ''), 16);
-    const bodyKey = cd.gender === 'female' ? 'player_body_female' : 'player_body_male';
+    const W = this.W, y = this.PLY;
+    const cd  = window.characterData || {};
+    const t   = hex => parseInt((hex || '#ffffff').replace('#', ''), 16);
+    const bk  = cd.gender === 'female' ? 'player_body_female' : 'player_body_male';
 
-    // Invisible physics driver
-    this.player = this.physics.add.sprite(160, spawnY, bodyKey, 0);
-    this.player.setAlpha(0).setCollideWorldBounds(false);
-    this.player.body.setSize(20, 24).setOffset(6, 22);
+    const ps = this.PLAYER_SCALE;
+    this._pBody  = this.add.sprite(W / 2, y, bk, 8).setDepth(6.0).setAlpha(0.88).setScale(ps);
+    this._pShirt = this.add.sprite(W / 2, y, 'player_shirt', 8).setDepth(6.2).setAlpha(0.88)
+      .setTint(t(cd.colors?.shirt)).setScale(ps);
+    this._pPants = this.add.sprite(W / 2, y, 'player_pants', 8).setDepth(6.3).setAlpha(0.88)
+      .setTint(t(cd.colors?.pants)).setScale(ps);
+    this._pShoes = this.add.sprite(W / 2, y, 'player_shoes', 8).setDepth(6.1).setAlpha(0.88)
+      .setTint(t(cd.colors?.shoes)).setScale(ps);
 
-    // Visual layers — same pattern as GameScene
-    this._pBody  = this.add.sprite(160, spawnY, bodyKey,       0).setDepth(5.0);
-    this._pShirt = this.add.sprite(160, spawnY, 'player_shirt', 0).setDepth(5.2)
-      .setTint(t(cd.colors && cd.colors.shirt));
-    this._pShoes = this.add.sprite(160, spawnY, 'player_shoes', 0).setDepth(5.1)
-      .setTint(t(cd.colors && cd.colors.shoes));
-    this._pPants = this.add.sprite(160, spawnY, 'player_pants', 0).setDepth(5.3)
-      .setTint(t(cd.colors && cd.colors.pants));
-
-    // Ensure walk-right animation exists (GameScene registers it, but be safe)
-    if (!this.anims.exists('bball-walk-right')) {
-      this.anims.create({
-        key: 'bball-walk-right',
-        frames: this.anims.generateFrameNumbers(bodyKey, { start: 8, end: 11 }),
-        frameRate: 8, repeat: -1,
-      });
+    if (!this.anims.exists('bb2_idle')) {
+      this.anims.create({ key: 'bb2_idle',
+        frames: this.anims.generateFrameNumbers(bk, { start: 8, end: 11 }),
+        frameRate: 5, repeat: -1 });
     }
-    this.player.anims.play('bball-walk-right', true);
-
-    this.physics.add.collider(this.player, this._ground, () => {
-      this._isOnGround = true;
-    });
-
-    this._ballSprite = this.add.image(0, 0, 'bball_ball').setDepth(6);
-    this._shotSprite = this.add.image(0, 0, 'bball_ball').setDepth(6).setVisible(false);
+    this._pBody.play('bb2_idle');
   }
 
-  // Apply position + current animation frame to all visual layers
-  _syncLayers() {
-    const fi = this.player.anims.currentFrame
-      ? this.player.anims.currentFrame.index
-      : 8;
-    const x = this.player.x, y = this.player.y;
-    this._pBody .setFrame(fi).setPosition(x, y);
-    this._pShirt.setFrame(fi).setPosition(x, y);
-    this._pShoes.setFrame(fi).setPosition(x, y);
-    this._pPants.setFrame(fi).setPosition(x, y);
+  _pLayers() { return [this._pBody, this._pShirt, this._pPants, this._pShoes]; }
+  _pAlpha(a) { this._pLayers().forEach(s => s.setAlpha(a)); }
+  _pScale(sx, sy) {
+    const ps = this.PLAYER_SCALE;
+    this._pLayers().forEach(s => s.setScale(ps * sx, ps * sy));
+  }
+  _pFrame(f) { this._pLayers().forEach(s => s.setFrame(f)); }
+
+  // ── Perspective Manager ───────────────────────────────────────────────────────
+  // Single source of truth for depth→scale mapping.
+  // y = VP.y (horizon, 182) → 0.18   y = BY (bottom, 548) → 1.0
+  perspScale(y) {
+    const t = Math.max(0, Math.min(1, (y - this.VP.y) / (this.BY - this.VP.y)));
+    return 0.18 + t * 0.82;
   }
 
-  _layerAlpha(a) {
-    this._pBody.setAlpha(a); this._pShirt.setAlpha(a);
-    this._pShoes.setAlpha(a); this._pPants.setAlpha(a);
+  // ── Defender (drawn each frame) ──────────────────────────────────────────────
+
+  _buildDefender() {
+    this._defG = this.add.graphics().setDepth(5);
+    const opp  = BB_OPPONENTS[Math.min(_BB.level, BB_OPPONENTS.length - 1)];
+    this._defNameText = this.add.text(this.W / 2, 60, opp.name.toUpperCase(), {
+      fontFamily: 'Courier New', fontSize: '11px', color: '#aabbff',
+      stroke: '#000', strokeThickness: 2,
+    }).setOrigin(0.5).setDepth(7).setVisible(false);
   }
 
-  _layerScale(sx, sy) {
-    this._pBody.setScale(sx, sy); this._pShirt.setScale(sx, sy);
-    this._pShoes.setScale(sx, sy); this._pPants.setScale(sx, sy);
-  }
-
-  _layerAngle(a) {
-    this._pBody.setAngle(a); this._pShirt.setAngle(a);
-    this._pShoes.setAngle(a); this._pPants.setAngle(a);
-  }
-
-  // ── Crush Wall ─────────────────────────────────────────────────────────────
-
-  _buildWall() {
-    // Invisible position tracker — all game-logic reads/writes this._wall.x
-    this._wall = this.add.rectangle(
-      this.player.x - 480, this.H / 2, 2, this.H, 0x000000, 0
-    ).setDepth(1);
-    // Graphics object redrawn each frame as a giant basketball player
-    this._wallLines = this.add.graphics().setDepth(8);
-    this._wallLabel = this.add.text(0, 28, 'TITAN', {
-      fontFamily: 'Courier New', fontSize: '13px',
-      color: '#ff9999', stroke: '#000', strokeThickness: 3, align: 'center',
-    }).setOrigin(0.5).setDepth(9);
-  }
-
-  _updateWall(dt) {
-    this._wall.x += this.wallSpeed * dt;
-    this._wallLabel.x = this._wall.x;
-
-    const g  = this._wallLines;
+  _drawDefender() {
+    const g = this._defG;
     g.clear();
+    if (this.state === 'menu') return;
 
-    const x   = this._wall.x;
-    const fy  = this.GROUND_Y;           // foot Y
-    const t   = Date.now() / 1000;
-    const str = Math.sin(t * 4.5) * 14; // stride oscillation
+    const y  = this._defPos.y;
+    const sc = this.perspScale(y) * this.DEF_SCALE;
+    const s  = v => v * sc;
 
-    // Drop shadow
-    g.fillStyle(0x000000, 0.25);
-    g.fillEllipse(x, fy + 6, 130, 16);
+    // ── Visual states ───────────────────────────────────────────────────────────
+    // Steal warn: defender LEANS toward player (5px shift) + jersey flashes
+    const stealWarn  = this._stealWarnActive || this._stealDodgeActive;
+    const switchWarn = this._switchWindowActive;
+    const now        = Date.now();
 
-    // ── Shoes ──
+    // Dribble sway: defender shifts slightly L/R while dribbling
+    const dribbleSway = (this.state === 'defense')
+      ? Math.sin(this._dribblePhase * 1.8) * s(7) : 0;
+
+    // Lean during steal warn: 8px toward player center
+    const leanX = stealWarn ? s(8) * (this._defPos.x <= 0 ? 1 : -1) : 0;
+
+    // Flash: rapid jersey color flicker every 60ms during tell window
+    const flashing = stealWarn || switchWarn;
+    const flashOn  = flashing && (Math.floor(now / 55) % 2 === 0);
+
+    const x = this.W / 2 + this._defPos.x + dribbleSway + leanX;
+
+    const jerseyC = flashOn  ? 0xffee00 : (stealWarn || switchWarn) ? 0xff2222 : 0x1f4dcc;
+    const shortsC = flashOn  ? 0xddcc00 : (stealWarn || switchWarn) ? 0xcc1111 : 0x163a99;
+    const skinC   = 0xd4956a;
+
+    // ── Y-sort: defender depth relative to player ───────────────────────────────
+    // Defender is "in front of" player when their Y >= player's screen Y
+    const playerScreenY = this.PLY - this._playerDepth * 130;
+    if (y >= playerScreenY - 20) {
+      this._defG.setDepth(7);
+      this._pLayers().forEach(pl => pl.setDepth(5.5));
+    } else {
+      this._defG.setDepth(5);
+      this._pLayers().forEach(pl => pl.setDepth(6));
+    }
+
+    // ── Draw ────────────────────────────────────────────────────────────────────
+
+    // Shadow
+    g.fillStyle(0x000000, 0.22);
+    g.fillEllipse(x, y + s(28), s(82), s(15));
+
+    // Shoes
     g.fillStyle(0x111111);
-    g.fillRect(x - 38 + str * 0.4, fy - 16, 34, 16);
-    g.fillRect(x + 4 - str * 0.4,  fy - 16, 34, 16);
-    // sole highlight
-    g.fillStyle(0x444444);
-    g.fillRect(x - 38 + str * 0.4, fy - 3, 34, 3);
-    g.fillRect(x + 4 - str * 0.4,  fy - 3, 34, 3);
+    g.fillRect(x - s(28), y + s(10), s(22), s(12));
+    g.fillRect(x + s(6),  y + s(10), s(22), s(12));
 
-    // ── Lower legs (shin) ──
-    g.lineStyle(18, 0xdd1111);
-    g.lineBetween(x - 20 + str,      fy - 80,  x - 20 + str * 0.4, fy - 16);
-    g.lineBetween(x + 20 - str,      fy - 80,  x + 20 - str * 0.4, fy - 16);
+    // Lower legs
+    g.lineStyle(s(12), jerseyC);
+    g.lineBetween(x - s(14), y - s(42), x - s(12), y + s(10));
+    g.lineBetween(x + s(14), y - s(42), x + s(12), y + s(10));
 
-    // ── Upper legs (thigh) ──
-    g.lineStyle(26, 0xcc1111);
-    g.lineBetween(x - 22, fy - 175,  x - 20 + str, fy - 80);
-    g.lineBetween(x + 22, fy - 175,  x + 20 - str, fy - 80);
+    // Shorts
+    g.fillStyle(shortsC);
+    g.fillRect(x - s(32), y - s(64), s(64), s(26));
 
-    // ── Shorts ──
-    g.fillStyle(0xaa0e0e);
-    g.fillRect(x - 50, fy - 205, 100, 38);
-    g.lineStyle(1, 0xff4444, 0.5);
-    g.strokeRect(x - 50, fy - 205, 100, 38);
+    // Torso / jersey
+    g.fillStyle(jerseyC);
+    g.fillRect(x - s(32), y - s(132), s(64), s(72));
+    // Jersey number
+    g.lineStyle(s(2.5), 0xffffff, 0.8);
+    g.lineBetween(x - s(13), y - s(118), x - s(13), y - s(82));
+    g.lineBetween(x - s(4),  y - s(82),  x - s(4),  y - s(68));
+    g.strokeCircle(x + s(10), y - s(95), s(12));
 
-    // ── Jersey / torso ──
-    g.fillStyle(0xdd1111);
-    g.fillRect(x - 52, fy - 340, 104, 142);
-    // Jersey side stripes
-    g.fillStyle(0xffffff, 0.15);
-    g.fillRect(x - 52, fy - 340, 14, 142);
-    g.fillRect(x + 38,  fy - 340, 14, 142);
-    // Jersey number "00"
-    g.lineStyle(3, 0xffffff, 0.9);
-    g.strokeCircle(x - 16, fy - 270, 12);
-    g.strokeCircle(x + 16, fy - 270, 12);
+    // Arms — raised during steal / contest; swing during dribble
+    const armSwing  = (this.state === 'defense') ? Math.sin(this._dribblePhase * 1.8) * s(10) : 0;
+    const armRaise  = (switchWarn || this._stealDodgeActive) ? s(28) : 0;
+    g.lineStyle(s(14), jerseyC);
+    g.lineBetween(x - s(32), y - s(112), x - s(55), y - s(72) + armSwing);
+    g.lineBetween(x + s(32), y - s(112), x + s(55), y - s(72) - armSwing);
+    g.lineStyle(s(11), skinC);
+    g.lineBetween(x - s(55), y - s(72) + armSwing,  x - s(50), y - s(105) - armRaise + armSwing);
+    g.lineBetween(x + s(55), y - s(72) - armSwing,  x + s(50), y - s(105) - armRaise - armSwing);
 
-    // ── Arms ──
-    const aSwing = Math.sin(t * 4.5 + Math.PI) * 20;
-    g.lineStyle(24, 0xee1111);
-    g.lineBetween(x - 52, fy - 325, x - 84, fy - 240 + aSwing);
-    g.lineBetween(x + 52, fy - 325, x + 84, fy - 240 - aSwing);
-    // Forearms (skin)
-    g.lineStyle(19, 0xd4956a);
-    g.lineBetween(x - 84, fy - 240 + aSwing, x - 92, fy - 188 + aSwing * 0.5);
-    g.lineBetween(x + 84, fy - 240 - aSwing, x + 92, fy - 188 - aSwing * 0.5);
-    // Fists
-    g.fillStyle(0xd4956a);
-    g.fillCircle(x - 92, fy - 188 + aSwing * 0.5, 11);
-    g.fillCircle(x + 92, fy - 188 - aSwing * 0.5, 11);
+    // Neck + head
+    g.fillStyle(skinC);
+    g.fillRect(x - s(12), y - s(146), s(24), s(18));
+    g.fillCircle(x, y - s(162), s(20));
 
-    // ── Neck ──
-    g.fillStyle(0xd4956a);
-    g.fillRect(x - 13, fy - 354, 26, 20);
-
-    // ── Head ──
-    g.fillStyle(0xd4956a);
-    g.fillCircle(x, fy - 376, 34);
-
-    // Hair
-    g.fillStyle(0x180a00);
-    g.fillEllipse(x, fy - 402, 64, 24);
-    g.fillRect(x - 32, fy - 410, 64, 15);
-
-    // Eyes — glaring, slightly angry
-    g.fillStyle(0xffffff);
-    g.fillRect(x - 20, fy - 385, 13, 9);
-    g.fillRect(x + 7,  fy - 385, 13, 9);
+    // Eyes — flash yellow when steal is imminent
+    const eyeC = flashOn ? 0xff4400 : 0xffffff;
+    g.fillStyle(eyeC);
+    g.fillRect(x - s(12), y - s(170), s(8), s(5));
+    g.fillRect(x + s(4),  y - s(170), s(8), s(5));
     g.fillStyle(0x111111);
-    g.fillRect(x - 16, fy - 384, 7, 7);
-    g.fillRect(x + 10, fy - 384, 7, 7);
-    // Scowl brow
-    g.lineStyle(3, 0x3a1a00);
-    g.lineBetween(x - 22, fy - 393, x - 8, fy - 389);
-    g.lineBetween(x + 8,  fy - 389, x + 22, fy - 393);
+    g.fillRect(x - s(10), y - s(169), s(5), s(4));
+    g.fillRect(x + s(5),  y - s(169), s(5), s(4));
+    // Scowl (angry brow)
+    g.lineStyle(s(2), 0x3a1a00);
+    g.lineBetween(x - s(13), y - s(176), x - s(5), y - s(172));
+    g.lineBetween(x + s(5),  y - s(172), x + s(13), y - s(176));
 
-    // Sweat drops (intensity lines)
-    g.lineStyle(1, 0xff6666, 0.5);
-    g.lineBetween(x - 55, fy - 395, x - 70, fy - 418);
-    g.lineBetween(x + 55, fy - 395, x + 70, fy - 418);
+    // Name plate
+    const nameY = y - s(192);
+    this._defNameText.setPosition(x, nameY).setVisible(true)
+      .setFontSize(Math.max(8, Math.round(10 * sc)) + 'px');
   }
 
-  // ── HUD ────────────────────────────────────────────────────────────────────
+  // ── Ball ────────────────────────────────────────────────────────────────────
+
+  _buildBall() {
+    this._ballSprite = this.add.image(this._ballX, this._ballY, 'bb2_ball').setDepth(8);
+  }
+
+  // ── HUD ─────────────────────────────────────────────────────────────────────
 
   _buildHUD() {
-    const depth = 20;
-    const sf    = 0; // setScrollFactor(0) = fixed to camera
+    const W = this.W, H = this.H;
+    const sf = 0, d  = 20;
 
-    this.add.rectangle(this.W / 2, 22, this.W, 44, 0x0a0612, 0.88)
-      .setScrollFactor(sf).setDepth(depth);
+    this.add.rectangle(W / 2, 22, W, 44, 0x080410, 0.90).setScrollFactor(sf).setDepth(d);
 
-    this._scoreText = this.add.text(14, 22, 'Score: 0', {
-      fontFamily: 'Courier New', fontSize: '16px', color: '#ffdd88',
+    this._pScoreText = this.add.text(W / 4 - 10, 22, 'YOU: 0', {
+      fontFamily: 'Courier New', fontSize: '18px', color: '#55ff88',
       stroke: '#000', strokeThickness: 3,
-    }).setOrigin(0, 0.5).setScrollFactor(sf).setDepth(depth);
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(d);
 
-    this._wallText = this.add.text(this.W / 2, 22, '', {
-      fontFamily: 'Courier New', fontSize: '12px', color: '#ff8888',
-      stroke: '#000', strokeThickness: 2,
-    }).setOrigin(0.5).setScrollFactor(sf).setDepth(depth);
+    this._aScoreText = this.add.text(3 * W / 4 + 10, 22, 'CPU: 0', {
+      fontFamily: 'Courier New', fontSize: '18px', color: '#ff5555',
+      stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(d);
 
-    this._heatText = this.add.text(this.W - 100, 22, '', {
-      fontFamily: 'Courier New', fontSize: '13px', color: '#ff6600',
-      stroke: '#000', strokeThickness: 2,
-    }).setOrigin(0.5).setScrollFactor(sf).setDepth(depth);
+    this._oppText = this.add.text(W / 2, 12, '', {
+      fontFamily: 'Courier New', fontSize: '11px', color: '#778899',
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(d);
 
-    this._msgText = this.add.text(this.W / 2, this.H / 2 - 80, '', {
+    this._possText = this.add.text(W / 2, 30, '', {
+      fontFamily: 'Courier New', fontSize: '11px', color: '#aaaaaa',
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(d);
+
+    this._msgText = this.add.text(W / 2, H / 2 - 52, '', {
       fontFamily: 'Courier New', fontSize: '28px', color: '#ffff55',
       stroke: '#000', strokeThickness: 5,
-    }).setOrigin(0.5).setScrollFactor(sf).setDepth(25);
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(25).setVisible(false);
 
-    const lb = this.add.rectangle(this.W - 46, 22, 72, 26, 0x110900)
+    this._ctrlText = this.add.text(W / 2, H - 16, '', {
+      fontFamily: 'Courier New', fontSize: '11px', color: '#445566',
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(d);
+
+    // Openness indicator — prominent bar + label on left side
+    this._opennessBg   = this.add.rectangle(54, H / 2, 108, 26, 0x000000, 0.70)
+      .setScrollFactor(sf).setDepth(d).setVisible(false);
+    this._opennessBar  = this.add.rectangle(6, H / 2, 2, 20, 0x55ff88)
+      .setScrollFactor(sf).setDepth(d + 1).setOrigin(0, 0.5).setVisible(false);
+    this._opennessText = this.add.text(54, H / 2, '', {
+      fontFamily: 'Courier New', fontSize: '15px', color: '#55ff88',
+      stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(d + 2);
+
+    // STEAL! flash (offense — defender lunging)
+    this._stealWarnText = this.add.text(W / 2, H / 2 + 45, 'STEAL!', {
+      fontFamily: 'Courier New', fontSize: '26px', color: '#ff2222',
+      stroke: '#000', strokeThickness: 5,
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(26).setVisible(false);
+
+    // STEAL WINDOW flash (defense — dribble switch)
+    this._switchText = this.add.text(W / 2, H / 2 + 45, 'STEAL WINDOW!', {
+      fontFamily: 'Courier New', fontSize: '22px', color: '#ffff22',
+      stroke: '#000', strokeThickness: 4,
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(26).setVisible(false);
+
+    // Leave button
+    const lb = this.add.rectangle(W - 46, 22, 72, 26, 0x110900)
       .setStrokeStyle(1, 0x6a4020).setInteractive({ useHandCursor: true })
-      .setScrollFactor(sf).setDepth(depth);
-    this.add.text(this.W - 46, 22, 'LEAVE', {
+      .setScrollFactor(sf).setDepth(d);
+    this.add.text(W - 46, 22, 'LEAVE', {
       fontFamily: 'Courier New', fontSize: '11px', color: '#aa7744',
-    }).setOrigin(0.5).setScrollFactor(sf).setDepth(depth + 1);
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(d + 1);
     lb.on('pointerup',   () => this._exit());
     lb.on('pointerover', () => lb.setFillStyle(0x221508));
     lb.on('pointerout',  () => lb.setFillStyle(0x110900));
-
-    // Controls panel — fixed bottom-left corner
-    this.add.rectangle(72, this.H - 52, 144, 68, 0x000000, 0.72)
-      .setStrokeStyle(1, 0x334455).setScrollFactor(sf).setDepth(depth);
-    const ctrlStyle = {
-      fontFamily: 'Courier New', fontSize: '10px',
-      stroke: '#000', strokeThickness: 2,
-    };
-    const controls = [
-      { key: '↑ / W',     color: '#88ffcc', action: 'Jump       (LOW)' },
-      { key: '⇧ / D',     color: '#ffdd88', action: 'Crossover  (HIGH)' },
-      { key: '↓ / S',     color: '#ff88cc', action: 'Spin       (DEF)' },
-      { key: 'SPACE',     color: '#aaddff', action: 'Shoot Meter' },
-    ];
-    controls.forEach((c, i) => {
-      const y = this.H - 80 + i * 14;
-      this.add.text(8,  y, c.key,    { ...ctrlStyle, color: c.color })
-        .setScrollFactor(sf).setDepth(depth + 1);
-      this.add.text(56, y, c.action, { ...ctrlStyle, color: '#778899' })
-        .setScrollFactor(sf).setDepth(depth + 1);
-    });
   }
 
-  // ── Double-Apex meter UI ───────────────────────────────────────────────────
+  _updateHUD() {
+    const opp  = BB_OPPONENTS[Math.min(_BB.level, BB_OPPONENTS.length - 1)];
+    this._pScoreText.setText(`SCORE: ${this.playerScore}`);
+    this._aScoreText.setText(`GOAL: ${BB_WIN}`);
+    this._oppText.setText(`${opp.name}  ·  Lv ${_BB.level + 1}`);
+    this._possText.setText('▶ YOUR BALL');
+
+    if (this.state === 'offense' || this.state === 'shot_arc') {
+      const pct    = Math.round(this.openness * 100);
+      const col    = pct >= 60 ? '#55ff88' : pct >= 40 ? '#ffdd44' : '#ff5533';
+      const label  = pct >= 60 ? 'OPEN!' : pct >= 40 ? 'CONTESTED' : 'COVERED';
+      const barW   = Math.round(this.openness * 96);
+      const barCol = pct >= 60 ? 0x33dd66 : pct >= 40 ? 0xddcc00 : 0xdd3311;
+      this._opennessBg.setVisible(true);
+      this._opennessBar.setVisible(true).setSize(Math.max(2, barW), 20).fillColor = barCol;
+      this._opennessText.setText(`${pct}%  ${label}`).setColor(col).setVisible(true);
+    } else {
+      this._opennessBg.setVisible(false);
+      this._opennessBar.setVisible(false);
+      this._opennessText.setVisible(false);
+    }
+  }
+
+  // ── Charge meter UI ──────────────────────────────────────────────────────────
 
   _buildMeterUI() {
-    this._meter = this.add.container(this.W / 2, this.H / 2 + 20)
-      .setScrollFactor(0).setDepth(30).setVisible(false);
+    const W = this.W, H = this.H;
+    this._meterCont = this.add.container(W / 2, H - 52)
+      .setScrollFactor(0).setDepth(22).setVisible(false);
 
-    const bg = this.add.rectangle(0, 0, 280, 190, 0x000000, 0.82)
-      .setStrokeStyle(2, 0x4488ff);
-
-    this._meterTitle = this.add.text(0, -78, 'DOUBLE-APEX SHOT', {
-      fontFamily: 'Courier New', fontSize: '13px', color: '#aaddff',
-      stroke: '#000', strokeThickness: 2,
+    const bg  = this.add.rectangle(0, 0, 240, 28, 0x000000, 0.80)
+      .setStrokeStyle(1, 0x334455);
+    const trk = this.add.rectangle(0, 4, 200, 14, 0x1a1a1a)
+      .setStrokeStyle(1, 0x2a2a2a);
+    // Sweet spot: charge 0.60–0.90 → bar pixels 120–180 from left edge
+    // Bar spans x = -100 to +100. 0.60 → -100+120=20, 0.90 → -100+180=80, center=50, width=60
+    const gz = this.add.rectangle(50, 4, 60, 14, 0x007700, 0.42);
+    this._mFill = this.add.rectangle(-99, 4, 2, 12, 0x44ff44);
+    this._mLabel = this.add.text(0, -11, 'HOLD SPACE — release in GREEN ZONE', {
+      fontFamily: 'Courier New', fontSize: '10px', color: '#667788',
     }).setOrigin(0.5);
 
-    // Power bar (vertical), center at (−60, 5), height 100
-    const pwBg = this.add.rectangle(-60, 5, 22, 100, 0x1a1a1a).setStrokeStyle(1, 0x555555);
-    // green target zone = top 10% of bar = top 10px
-    this.add.rectangle(-60, -40, 20, 10, 0x00ff00, 0.25);   // target highlight
-    this._powerFill = this.add.rectangle(-60, 55, 20, 0, 0x44ff44);  // bottom-anchored fill
-    this._powerLabel = this.add.text(-60, -62, 'POWER', {
-      fontFamily: 'Courier New', fontSize: '10px', color: '#88ff88',
-    }).setOrigin(0.5);
-
-    // Aim bar (horizontal), center at (30, 55), width 100
-    const aimBg = this.add.rectangle(30, 55, 100, 22, 0x1a1a1a).setStrokeStyle(1, 0x555555);
-    // target zone = rightmost 10px
-    this.add.rectangle(75, 55, 10, 20, 0x00ff00, 0.25);     // target highlight
-    this._aimFill = this.add.rectangle(-20, 55, 0, 20, 0xffaa00);    // left-anchored fill
-    this._aimLabel = this.add.text(30, 35, 'AIM', {
-      fontFamily: 'Courier New', fontSize: '10px', color: '#ffdd88',
-    }).setOrigin(0.5);
-
-    this._meterHint = this.add.text(0, 82, 'HOLD SPACE → lock POWER', {
-      fontFamily: 'Courier New', fontSize: '10px', color: '#888888',
-    }).setOrigin(0.5);
-
-    this._meter.add([bg, this._meterTitle,
-      pwBg, this._powerFill, this._powerLabel,
-      aimBg, this._aimFill, this._aimLabel,
-      this._meterHint]);
+    this._meterCont.add([bg, trk, gz, this._mFill, this._mLabel]);
   }
 
-  // ── Input ──────────────────────────────────────────────────────────────────
+  // ── Input ────────────────────────────────────────────────────────────────────
 
   _setupInput() {
     this._keys = this.input.keyboard.addKeys({
+      left:  Phaser.Input.Keyboard.KeyCodes.LEFT,
+      right: Phaser.Input.Keyboard.KeyCodes.RIGHT,
       up:    Phaser.Input.Keyboard.KeyCodes.UP,
-      w:     Phaser.Input.Keyboard.KeyCodes.W,
       down:  Phaser.Input.Keyboard.KeyCodes.DOWN,
-      s:     Phaser.Input.Keyboard.KeyCodes.S,
-      shift: Phaser.Input.Keyboard.KeyCodes.SHIFT,
-      d:     Phaser.Input.Keyboard.KeyCodes.D,
+      z:     Phaser.Input.Keyboard.KeyCodes.Z,   // crossover
+      x:     Phaser.Input.Keyboard.KeyCodes.X,   // spin
+      s:     Phaser.Input.Keyboard.KeyCodes.S,   // spin (alt)
       space: Phaser.Input.Keyboard.KeyCodes.SPACE,
     });
 
-    this._keys.space.on('down', () => {
-      if (this.state !== this.ST_LOCKED || this._meterPhase !== 1) return;
-      this._powerVal   = this._meterVal(this._meterTime);
-      this._meterPhase = 2;
-      this._meterTime  = 0;
-      this._meterHint.setText('RELEASE SPACE → lock AIM');
+    this._keys.space.on('down', () => this._onSpaceDown());
+    this._keys.space.on('up',   () => this._onSpaceUp());
+    this._keys.z.on('down',     () => this._onCrossover());
+    this._keys.x.on('down',     () => this._onSpin());
+    this._keys.s.on('down',     () => this._onSpin());
+    // Persistent ESC listener — exits any time
+    this.input.keyboard.on('keydown-ESC', () => this._exit());
+  }
+
+  _onSpaceDown() {
+    if (this.state === 'offense' && !this._stealDodgeActive && !this._stealWarnActive) {
+      this._charging  = true;
+      this._chargeVal = 0;
+      this._meterCont.setVisible(true);
+      this._ctrlText.setText('Release SPACE to shoot!');
+    } else if (this.state === 'defense' && this._switchWindowActive) {
+      this._attemptPlayerSteal();
+    }
+  }
+
+  _onSpaceUp() {
+    if (this.state === 'offense' && this._charging) {
+      this._charging = false;
+      this._meterCont.setVisible(false);
+      this._releaseShot();
+    }
+  }
+
+  _onCrossover() {
+    if (this.state !== 'offense') return;
+    // Direction: follow held arrow, or toward open side relative to defender
+    const dir = this._keys.left.isDown  ? -1
+              : this._keys.right.isDown ? 1
+              : (this._playerX > this.W / 2 + this._defPos.x ? 1 : -1);
+    if (this._stealDodgeActive) {
+      this._beatSteal('BLOW-BY!', 0.38, dir, false);
+    } else if (!this._stealWarnActive) {
+      this.openness        = Math.min(0.95, this.openness + 0.07);
+      this._crossoverDir   = dir;
+      this._crossoverTimer = 0.42;
+    }
+  }
+
+  _onSpin() {
+    if (this.state !== 'offense') return;
+    if (this._stealDodgeActive) {
+      this._beatSteal('SPIN MOVE!', 0.28, 0, true);
+    } else if (!this._stealWarnActive) {
+      this.openness    = Math.min(0.95, this.openness + 0.05);
+      this._spinActive = true;
+      this._spinTimer  = 0.55;
+    }
+  }
+
+  _beatSteal(msg, bonus, crossDir, spin) {
+    this._stealDodgeActive  = false;
+    this._stealWarnActive   = false;
+    this._stealWarnText.setVisible(false);
+    this.openness           = Math.min(0.95, this.openness + bonus);
+    this._pastDefender      = true;
+    this._pastDefenderTimer = 3.5;  // seconds before defender recovers
+    this._showMsg(msg, '#00ffcc');
+    if (crossDir !== 0) { this._crossoverDir = crossDir; this._crossoverTimer = 0.5; }
+    if (spin)           { this._spinActive = true;        this._spinTimer = 0.60; }
+    this._resetNextStealTimer();
+
+    // Player lunges past the defender — advance depth forward visually.
+    // Defender stumbles a short distance to the side; recovery via logic loop.
+    this._playerDepth = Math.min(1, this._playerDepth + 0.45);
+    const slideDir = crossDir !== 0 ? -crossDir : (Math.random() < 0.5 ? 1 : -1);
+    this.tweens.add({
+      targets: this._defPos, x: this._defPos.x + slideDir * 90,
+      duration: 280, ease: 'Power2',
     });
-
-    this._keys.space.on('up', () => {
-      if (this.state !== this.ST_LOCKED || this._meterPhase !== 2) return;
-      this._aimVal = this._meterVal(this._meterTime);
-      this._evaluateShot();
-    });
   }
 
-  // ── Section spawning ───────────────────────────────────────────────────────
-
-  _spawnSection(startX) {
-    const OBS_TYPES = ['low', 'high', 'defender'];
-    const HOOP_X    = startX + 1350;
-    const ZONE_X    = HOOP_X - 130;
-
-    // Obstacle count grows with hoops scored: 3 → up to 7
-    const count = Math.min(3 + Math.floor(this.hoopsScored / 2), 7);
-
-    // Generate random x positions in [150, ZONE_X - startX - 60], min 180px apart
-    const positions = [];
-    const maxX = ZONE_X - startX - 60;
-    let attempts = 0;
-    while (positions.length < count && attempts < 200) {
-      attempts++;
-      const px = Phaser.Math.Between(150, maxX);
-      if (positions.every(p => Math.abs(p - px) >= 180)) positions.push(px);
-    }
-    positions.sort((a, b) => a - b);
-
-    for (const offset of positions) {
-      const type = OBS_TYPES[Phaser.Math.Between(0, 2)];
-      this._spawnObstacle(startX + offset, type);
-    }
-
-    this._buildHoop(HOOP_X);
-
-    this._shotZones.push({
-      x: ZONE_X, w: 100,
-      hoopX: HOOP_X,
-      hoopY: this.GROUND_Y - 185,
-      triggered: false,
-    });
-
-    this._nextSectionX = startX + this.SECTION_LEN;
-  }
-
-  _spawnObstacle(x, type) {
-    if (type === 'low') {
-      // Bench on ground — jump over
-      const obs = this.add.image(x, this.GROUND_Y - 17, 'bball_low').setDepth(4);
-      this._obstacles.push({ x, type: 'low', hit: false, img: obs });
-
-    } else if (type === 'high') {
-      // Scoreboard falls from ceiling — hold CROSSOVER (Shift/D) to duck under it
-      const hangY  = this.H * 0.38 + 30;   // starting position (ceiling)
-      const blockY = this.GROUND_Y - 50;    // blocking height (overlaps standing player)
-      const obs    = this.add.image(x, hangY, 'bball_high').setDepth(4);
-      this._obstacles.push({ x, type: 'high', hit: false, img: obs,
-        fallen: false, startedFall: false, blockY });
-
-    } else {
-      // Defender — spin through; drifts slowly left toward player
-      const obs = this.physics.add.image(x, this.GROUND_Y - 21, 'bball_def').setDepth(4);
-      obs.body.allowGravity = false;
-      obs.body.velocity.x   = -45;
-      this._obstacles.push({ x, type: 'defender', hit: false, img: obs, moving: true });
+  _onContest() {
+    // Only effective while CPU shot is in the air
+    if (this.state !== 'shot_arc' || this._ballArcForPlayer) return;
+    if (!this._arcContested) {
+      this._arcContested = true;
+      this._showMsg('CONTESTED!', '#ffff33', 1000);
     }
   }
 
-  _buildHoop(x) {
-    const g  = this.add.graphics().setDepth(4);
-    const hy = this.GROUND_Y - 185;
-    const lx = x - 24, rx = x + 24;
+  // ── Menu ─────────────────────────────────────────────────────────────────────
 
-    // Support pole
-    g.fillStyle(0x999977);
-    g.fillRect(x + 28, hy - 30, 8, this.H - hy + 30);
+  _showMenu() {
+    const W   = this.W, H = this.H;
+    const opp = BB_OPPONENTS[Math.min(_BB.level, BB_OPPONENTS.length - 1)];
+    const sf  = 0, d  = 50;
+    const PW  = 466, PH = 372;
+    const cx  = W / 2, top = H / 2 - PH / 2;
+    const ts  = { fontFamily: 'Courier New', stroke: '#000', strokeThickness: 3 };
 
-    // Backboard
-    g.fillStyle(0xe8e8d8);
-    g.fillRect(x + 30, hy - 60, 8, 100);
-    g.lineStyle(2, 0x888877); g.strokeRect(x + 30, hy - 60, 8, 100);
-    g.lineStyle(2, 0xdd2222, 0.8); g.strokeRect(x + 30, hy - 20, 8, 45);
+    const menuObjs = [];
+    const mk = obj => { menuObjs.push(obj); return obj; };
 
-    // Rim connector
-    g.fillStyle(0xff5500); g.fillRect(rx, hy + 4, x + 30 - rx, 5);
+    mk(this.add.rectangle(W/2, H/2, W, H, 0x000000, 0.80).setScrollFactor(sf).setDepth(d));
+    mk(this.add.rectangle(cx, H/2, PW, PH, 0x050310, 0.97)
+      .setStrokeStyle(2, 0x334488).setScrollFactor(sf).setDepth(d));
 
-    // Rim
-    g.lineStyle(5, 0xff5500); g.lineBetween(lx, hy + 4, rx, hy + 4);
-    g.fillCircle(lx, hy + 4, 5); g.fillCircle(rx, hy + 4, 5);
+    mk(this.add.text(cx, top + 24, 'PRO-HOOPS DUEL', {
+      ...ts, fontSize: '22px', color: '#ff8844', strokeThickness: 4,
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(d));
+    mk(this.add.text(cx, top + 50, `vs ${opp.name}  ·  First to ${BB_WIN} baskets`, {
+      fontFamily: 'Courier New', fontSize: '13px', color: '#7788aa',
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(d));
+    mk(this.add.text(cx, top + 70, `Opponent level ${_BB.level + 1} of ${BB_OPPONENTS.length}`, {
+      fontFamily: 'Courier New', fontSize: '11px', color: '#445566',
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(d));
+    mk(this.add.rectangle(cx, top + 84, PW - 20, 1, 0x223355).setScrollFactor(sf).setDepth(d));
 
-    // Net
-    g.lineStyle(1, 0xddddaa, 0.6);
-    for (let i = 0; i <= 5; i++) {
-      const nx = lx + (rx - lx) / 5 * i;
-      g.lineBetween(nx, hy + 9, nx + (i - 2.5) * 2.5, hy + 42);
+    const rows = [
+      { label: 'OFFENSE',   color: '#ff8844' },
+      { key: '← / →',     action: 'Move laterally — create separation from defender' },
+      { key: '↑ / ↓',     action: 'Advance toward hoop / retreat to baseline' },
+      { key: 'Z',          action: 'Crossover — quick direction change, beats steal window' },
+      { key: 'X  or  S',  action: 'Spin move — also beats steal attempts' },
+      { key: 'SPACE',      action: 'Hold to charge shot, release in GREEN ZONE' },
+      { key: '',           action: '' },
+      { key: 'Get OPEN',   action: 'Higher % = better shot — advance past the defender!' },
+    ];
+
+    let cy = top + 98;
+    for (const r of rows) {
+      if (r.label) {
+        mk(this.add.text(cx - 206, cy, r.label + ':', {
+          fontFamily: 'Courier New', fontSize: '12px', color: r.color,
+          stroke: '#000', strokeThickness: 2,
+        }).setScrollFactor(sf).setDepth(d));
+      } else {
+        mk(this.add.text(cx - 206, cy, r.key, {
+          fontFamily: 'Courier New', fontSize: '12px', color: '#ffdd88',
+          stroke: '#000', strokeThickness: 2,
+        }).setScrollFactor(sf).setDepth(d));
+        mk(this.add.text(cx - 82, cy, r.action, {
+          fontFamily: 'Courier New', fontSize: '11px', color: '#778899',
+        }).setScrollFactor(sf).setDepth(d));
+      }
+      cy += 26;
     }
-    for (let j = 1; j <= 3; j++) {
-      const ny = hy + 9 + 33 * j / 3;
-      g.lineBetween(lx + j, ny, rx - j, ny);
-    }
 
-    // Shot zone floor indicator
-    g.lineStyle(1, 0x334466, 0.5);
-    g.strokeRect(x - 130, this.GROUND_Y - 3, 100, 5);
+    mk(this.add.rectangle(cx, top + 288, PW - 20, 1, 0x223355).setScrollFactor(sf).setDepth(d));
+
+    const btnBg = mk(this.add.rectangle(cx, top + 316, 150, 34, 0x0a2810)
+      .setStrokeStyle(2, 0x33aa55).setInteractive({ useHandCursor: true })
+      .setScrollFactor(sf).setDepth(d));
+    mk(this.add.text(cx, top + 316, 'START GAME', {
+      fontFamily: 'Courier New', fontSize: '14px', color: '#55ff88',
+      stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(d));
+    mk(this.add.text(cx, top + 350, 'ESC — leave gym', {
+      fontFamily: 'Courier New', fontSize: '10px', color: '#443322',
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(d));
+
+    btnBg.on('pointerover', () => btnBg.setFillStyle(0x133d1e));
+    btnBg.on('pointerout',  () => btnBg.setFillStyle(0x0a2810));
+    btnBg.on('pointerup',   () => { menuObjs.forEach(o => o.destroy()); this._startMatch(); });
+
+    const startFromKey = () => {
+      if (menuObjs[0]?.active) {
+        menuObjs.forEach(o => o.destroy());
+        this._startMatch();
+      }
+    };
+    this.input.keyboard.once('keydown-ENTER', startFromKey);
+    this.input.keyboard.once('keydown-SPACE', startFromKey);
   }
 
-  // ── Main update ────────────────────────────────────────────────────────────
+  // ── Match flow ───────────────────────────────────────────────────────────────
+
+  _startMatch() {
+    this.playerScore = 0;
+    this.aiScore     = 0;
+    this.possession  = 'player';
+    this._updateHUD();
+    this._startPossession();
+  }
+
+  _startPossession() {
+    if (this.playerScore >= BB_WIN) return;
+    this.possession = 'player';
+    this._startOffense();
+  }
+
+  _startOffense() {
+    this.state             = 'offense';
+    this.possession        = 'player';
+    this.openness          = 0.28;
+    this._charging         = false;
+    this._chargeVal        = 0;
+    this._stealWarnActive  = false;
+    this._stealDodgeActive = false;
+    this._crossoverDir     = 0;
+    this._spinActive       = false;
+    this._stealWarnText.setVisible(false);
+    this._switchText.setVisible(false);
+    this._meterCont.setVisible(false);
+    this._defPos.y          = 370;
+    this._defPos.x          = 0;
+    this._playerX           = this.W / 2;
+    this._playerDepth       = 0.18;
+    this._pastDefender      = false;
+    this._pastDefenderTimer = 0;
+    // Snap display to logical so there's no lerp gap at possession start
+    this._playerDispX     = this._playerX;
+    this._playerDispDepth = this._playerDepth;
+    this._ballX             = this._playerX + 18;
+    this._ballY             = this.PLY - 20;
+    this._resetNextStealTimer();
+    this._updateHUD();
+    this._ctrlText.setText('←/→ move  ↑↓ advance/retreat  Z crossover  X/S spin  SPACE shoot');
+  }
+
+  _startDefense() {
+    this.state               = 'defense';
+    this.possession          = 'ai';
+    this._switchWindowActive = false;
+    this._arcContested       = false;
+    this._stealWarnText.setVisible(false);
+    this._switchText.setVisible(false);
+    this._defPos.y           = 314;
+    this._defPos.x           = 0;
+    this._playerX            = this.W / 2;
+    this._ballX              = this.W / 2 + 16;
+    this._ballY              = this._defPos.y - 38;
+    this._resetNextSwitchTimer();
+    this._resetAiShootTimer();
+    this._updateHUD();
+    this._ctrlText.setText('SPACE — Steal (in window)   ↑/W — Contest (during CPU shot)');
+  }
+
+  // ── Main update ──────────────────────────────────────────────────────────────
 
   update(time, delta) {
-    if (this.state === this.ST_MENU) return;
+    if (this.state === 'menu' || this.state === 'match_end') return;
 
-    const dt = delta / 1000;
-
-    this._isOnGround = this.player.body.blocked.down;
-
-    // Sync visual layers to physics driver every frame
-    this._syncLayers();
-
-    // Carried ball follows player
-    const ballKey = this.heatCheck ? 'bball_fire' : 'bball_ball';
-    if (this._ballSprite.texture.key !== ballKey) this._ballSprite.setTexture(ballKey);
-    this._ballSprite.setPosition(this.player.x + 14, this.player.y + 5);
-
-    // Camera shake by wall proximity
-    const dist = this.player.x - this._wall.x;
-    if (dist < 300 && this.state === this.ST_RUNNING) {
-      this.cameras.main.shake(40, Math.max(0, (300 - dist) / 300) * 0.005);
+    // ── Fixed logic ticks (60 Hz) ─────────────────────────────────────────────
+    // Game logic runs at a fixed rate so timing windows are consistent
+    // regardless of render FPS (separates physics/logic from rendering).
+    this._logicAccum += delta / 1000;
+    while (this._logicAccum >= this.LOGIC_DT) {
+      this._logicTick(this.LOGIC_DT);
+      this._logicAccum -= this.LOGIC_DT;
     }
 
-    this._refreshHUD(dist);
-
-    if (this.state === this.ST_RUNNING) this._runUpdate(dt);
-    else if (this.state === this.ST_LOCKED)  this._lockUpdate(dt);
-    else if (this.state === this.ST_REBOUND) this._reboundUpdate(dt);
-
-    // Game over
-    if (this.player.x <= this._wall.x + 16 && this.state !== 'gameover') {
-      this._gameOver();
-    }
-
-    // Lazy-spawn next section
-    if (this.player.x > this._nextSectionX - 700) {
-      this._spawnSection(this._nextSectionX);
-    }
-
-    // Cull old obstacles (> 800px behind camera left)
-    const cullX = this.cameras.main.scrollX - 800;
-    this._obstacles = this._obstacles.filter(o => {
-      const ox = o.moving ? o.img.x : o.x;
-      if (ox < cullX) { o.img.destroy(); return false; }
-      return true;
-    });
+    // ── Render update (every frame) ───────────────────────────────────────────
+    this._drawDefender();
+    this._updateVisuals(delta / 1000);
+    this._updateBallSprite();
+    this._updateHUD();
   }
 
-  // ── Running state ──────────────────────────────────────────────────────────
+  _logicTick(dt) {
+    if (this.state === 'offense')        this._updateOffense(dt);
+    else if (this.state === 'defense')   this._updateDefense(dt);
+    else if (this.state === 'shot_arc')  this._updateBallArc(dt);
+    // 'result' state: just waits for delayedCall
+  }
 
-  _runUpdate(dt) {
-    // Auto-move
-    if (this._stunTimer > 0) {
-      this._stunTimer -= dt;
-      this.player.body.velocity.x = 0;
-    } else {
-      this.player.body.velocity.x = this._spinFrames > 0
-        ? this.PLAYER_SPEED * 0.85
-        : this.PLAYER_SPEED;
-    }
+  // ── Offense ──────────────────────────────────────────────────────────────────
 
-    // Jump
-    const jumpPressed = Phaser.Input.Keyboard.JustDown(this._keys.up)
-                     || Phaser.Input.Keyboard.JustDown(this._keys.w);
-    if (jumpPressed && this._isOnGround) {
-      this.player.body.velocity.y = -560;
-    }
+  _updateOffense(dt) {
+    const opp = BB_OPPONENTS[Math.min(_BB.level, BB_OPPONENTS.length - 1)];
 
-    // Spin (S / Down) — 30 frames of i-frames, flicker effect
-    if (Phaser.Input.Keyboard.JustDown(this._keys.s) ||
-        Phaser.Input.Keyboard.JustDown(this._keys.down)) {
-      this._spinFrames = 30;
-    }
-    if (this._spinFrames > 0) {
-      this._spinFrames--;
-      this._layerAlpha(0.35 + Math.sin(Date.now() / 40) * 0.35);
-    } else if (!this._crossover) {
-      this._layerAlpha(1);
+    // ── Player movement ──────────────────────────────────────────────────────────
+    // Lateral: free left/right (crossover animation fires on keydown separately)
+    if (!this._stealDodgeActive) {
+      if (this._keys.left.isDown)  this._playerX = Math.max(80,  this._playerX - 220 * dt);
+      if (this._keys.right.isDown) this._playerX = Math.min(720, this._playerX + 220 * dt);
     }
 
-    // Crossover (Shift / D) — brief side-to-side dodge; must press at the right moment
-    const crossJust = Phaser.Input.Keyboard.JustDown(this._keys.shift)
-                   || Phaser.Input.Keyboard.JustDown(this._keys.d);
-    if (crossJust && this._crossoverTimer <= 0) {
-      this._crossoverTimer = this._crossoverDur;
-      this._crossover = true;
+    // Forward (↑): defender slows advance proportional to lateral coverage
+    // blockFactor = 0 (fully covered) → 1 (open). Past defender = always open.
+    const playerScreenY = this.PLY - this._playerDepth * 130;
+    const defLateralGap = Math.abs(this._playerX - (this.W / 2 + this._defPos.x));
+    const blockFactor   = this._pastDefender ? 1.0 : Math.min(1.0, defLateralGap / 70);
+    if (this._keys.up.isDown && !this._charging) {
+      this._playerDepth = Math.min(1, this._playerDepth + 0.28 * dt * blockFactor);
     }
-    if (this._crossoverTimer > 0) {
-      this._crossoverTimer -= dt;
-      // Progress 0→1 over the move duration
-      const prog = 1 - this._crossoverTimer / this._crossoverDur;
-      // Full sine cycle: lean right → center → lean left → center
-      const sway = Math.sin(prog * Math.PI * 2) * 35;
-      this._layerAngle(sway);
-      this._layerScale(1 + Math.abs(sway) / 200, 1 - Math.abs(sway) / 280);
-      this._layerAlpha(0.8);
-      if (this._crossoverTimer <= 0) {
-        this._crossover = false;
-        this._layerAngle(0);
-        this._layerScale(1, 1);
-        if (this._spinFrames === 0) this._layerAlpha(1);
+    // Backward (↓) — always allowed
+    if (this._keys.down.isDown) {
+      this._playerDepth = Math.max(0, this._playerDepth - 0.38 * dt);
+    }
+
+    // ── Defender lateral mirroring ───────────────────────────────────────────────
+    // Harder defenders mirror faster, making it harder to get past
+    const mirrorSpeed = 80 + opp.stealFreq * 320;  // Rookie ~98 px/s, Legend ~304 px/s
+    const targetDefX  = this._playerX - this.W / 2; // center-relative
+    if (!this._pastDefender) {
+      const dx   = targetDefX - this._defPos.x;
+      const step = mirrorSpeed * dt;
+      this._defPos.x += Math.sign(dx) * Math.min(Math.abs(dx), step);
+    }
+
+    // ── Defender depth tracks player (when not in steal animation) ───────────────
+    if (!this._stealWarnActive && !this._stealDodgeActive && !this._pastDefender) {
+      const targetDefY = (this.PLY - this._playerDepth * 130) - 80;
+      const dy         = targetDefY - this._defPos.y;
+      this._defPos.y  += dy * Math.min(1, 3.5 * dt);
+    }
+
+    // ── Past-defender timer ──────────────────────────────────────────────────────
+    if (this._pastDefender) {
+      this._pastDefenderTimer -= dt;
+      // Openness grows while past the defender (near basket, open look)
+      this.openness = Math.min(0.95, this.openness + 0.06 * dt);
+      if (this._pastDefenderTimer <= 0) {
+        this._pastDefender = false;
+        // Defender recovers — smoothly slides back (logic will mirror again)
       }
     }
 
-    this._updateWall(dt);
-    this._checkObstacles();
-    this._checkShotZones();
-  }
-
-  // ── Locked state ───────────────────────────────────────────────────────────
-
-  _lockUpdate(dt) {
-    // Wall barely creeps during shot (slow-mo feel)
-    this._wall.x += this.wallSpeed * 0.25 * dt;
-    this._wallLabel.x = this._wall.x;
-
-    if (this._meterPhase < 1 || this._meterPhase > 2) return;
-    this._meterTime += dt;
-    const val = this._meterVal(this._meterTime);
-
-    if (this._meterPhase === 1) {
-      // Vertical bar fills from bottom; bg center at (−60,5), height=100 → bottom at y=55
-      const fillH = val * 100;
-      this._powerFill.setSize(20, fillH).setY(55 - fillH / 2);
-      this._powerFill.fillColor = val >= 0.9 ? 0x00ff00 : val >= 0.75 ? 0xffff00 : 0xff4444;
-    } else {
-      // Horizontal bar fills from left; bg center at (30,55), width=100 → left at x=−20
-      const fillW = val * 100;
-      this._aimFill.setSize(fillW, 20).setX(-20 + fillW / 2);
-      this._aimFill.fillColor = val >= 0.9 ? 0x00ff00 : val >= 0.75 ? 0xffff00 : 0xff4444;
+    // Charge meter animation
+    if (this._charging) {
+      this._chargeVal = Math.min(1, this._chargeVal + 0.88 * dt);
+      const w = Math.max(2, this._chargeVal * 200);
+      this._mFill.setSize(w, 12).setX(-100 + w / 2);
+      const inZone = this._chargeVal >= 0.60 && this._chargeVal <= 0.90;
+      this._mFill.fillColor = inZone ? 0x44ff44 : this._chargeVal > 0.90 ? 0xff4444 : 0xffaa00;
     }
-  }
 
-  // ── Rebound state ──────────────────────────────────────────────────────────
-
-  _reboundUpdate(dt) {
-    this._wall.x += this.wallSpeed * dt;
-    this._wallLabel.x = this._wall.x;
-    this._reboundTimer -= dt;
-    if (this._reboundTimer <= 0) this._retryShot();
-  }
-
-  // ── Obstacle detection ─────────────────────────────────────────────────────
-
-  _checkObstacles() {
-    const px = this.player.x;
-    for (const obs of this._obstacles) {
-      if (obs.hit) continue;
-      const ox = obs.moving ? obs.img.x : obs.x;
-
-      // Trigger scoreboard fall when player is ~110px away — tight timing window
-      if (obs.type === 'high' && !obs.startedFall && px > ox - 110) {
-        obs.startedFall = true;
-        this.tweens.add({
-          targets: obs.img,
-          y: obs.blockY,
-          duration: 480,
-          ease: 'Bounce.Out',
-          onComplete: () => { obs.fallen = true; },
-        });
-      }
-
-      if (Math.abs(px - ox) > 28) continue;  // not at obstacle x yet
-
-      obs.hit = true;
-
-      const safe =
-        (obs.type === 'low'      && !this._isOnGround)                 ||
-        (obs.type === 'high'     && (this._crossover || !obs.fallen))   ||
-        (obs.type === 'defender' && this._spinFrames > 0);
-
-      if (!safe) this._stun(obs.type);
-    }
-  }
-
-  _stun(obsType) {
-    if (this._stunTimer > 0) return;
-    this._stunTimer = 0.5;
-    this.cameras.main.shake(280, 0.018);
-    const hints = {
-      low:      'STUMBLE! (use JUMP next time)',
-      high:     'STUMBLE! (use CROSSOVER next time)',
-      defender: 'STUMBLE! (use SPIN next time)',
-    };
-    this._showMsg(hints[obsType] || 'STUMBLE!', '#ff8844');
-  }
-
-  // ── Shot zone detection ────────────────────────────────────────────────────
-
-  _checkShotZones() {
-    for (const zone of this._shotZones) {
-      if (zone.triggered) continue;
-      if (this.player.x >= zone.x && this.player.x <= zone.x + zone.w) {
-        zone.triggered = true;
-        this._activeHoop = { x: zone.hoopX, y: zone.hoopY };
-        this._enterLocked();
+    // Steal dodge window → turnover if expired
+    if (this._stealDodgeActive) {
+      this._stealDodgeTimer -= dt;
+      if (this._stealDodgeTimer <= 0) {
+        this._stealDodgeActive = false;
+        this._stealWarnActive  = false;
+        this._stealWarnText.setVisible(false);
+        this._meterCont.setVisible(false);
+        this._turnoverToAI();
         return;
       }
     }
+
+    // Brief steal warning → then open dodge window
+    if (this._stealWarnActive && !this._stealDodgeActive) {
+      this._stealWarnTimer -= dt;
+      if (this._stealWarnTimer <= 0) {
+        this._stealWarnActive  = false;
+        this._stealDodgeActive = true;
+        const opp = BB_OPPONENTS[Math.min(_BB.level, BB_OPPONENTS.length - 1)];
+        this._stealDodgeTimer = opp.reactionMs / 1000;
+      }
+    }
+
+    // Countdown to next steal attempt
+    if (!this._stealWarnActive && !this._stealDodgeActive) {
+      this._nextStealTimer -= dt;
+      if (this._nextStealTimer <= 0) this._triggerStealAttempt();
+    }
+
+    // Crossover/spin animation timers
+    if (this._crossoverTimer > 0 && (this._crossoverTimer -= dt) <= 0) this._crossoverDir = 0;
+    if (this._spinTimer     > 0 && (this._spinTimer     -= dt) <= 0) this._spinActive = false;
+
   }
 
-  // ── Meter oscillation ──────────────────────────────────────────────────────
-
-  _meterVal(t) {
-    // Sine wave 0→1→0; frequency increases with each hoop scored
-    const freq = 1.1 + this.hoopsScored * 0.12;
-    return (Math.sin(t * freq * Math.PI * 2 - Math.PI / 2) + 1) / 2;
-  }
-
-  // ── Shot flow ──────────────────────────────────────────────────────────────
-
-  _enterLocked() {
-    this.state = this.ST_LOCKED;
-    this.player.body.velocity.x = 0;
-    this.player.body.velocity.y = 0;
-    this.player.body.allowGravity = false;
-
-    this._meterPhase = 1;
-    this._meterTime  = 0;
-    this._meterHint.setText('HOLD SPACE → lock POWER');
-    this._powerFill.setSize(20, 0);
-    this._aimFill.setSize(0, 20);
-    this._meter.setVisible(true);
-  }
-
-  _evaluateShot() {
-    const p = this._powerVal, a = this._aimVal;
-    const result = (p >= 0.9 && a >= 0.9) ? 'perfect'
-                 : (p >= 0.75 && a >= 0.75) ? 'good'
-                 : 'brick';
-
-    this._meterPhase = 0;
-    this._meter.setVisible(false);
-    this._animateBall(result);
-  }
-
-  _animateBall(result) {
-    const sx = this.player.x, sy = this.player.y;
-    const hx = this._activeHoop.x;
-    const hy = this._activeHoop.y;
-
-    // Control point height driven by powerVal; landing x offset by aimVal
-    const cpY = sy - (this._powerVal * 200 + 80);
-    const cpX = (sx + hx) / 2;
-    const endX = result === 'perfect' ? hx
-               : result === 'good'    ? hx + 6
-               : hx + 32;
-    const endY = result === 'brick' ? hy + 18 : hy;
-
-    this._shotSprite.setTexture(this.heatCheck ? 'bball_fire' : 'bball_ball')
-      .setPosition(sx, sy).setVisible(true);
-    this._ballSprite.setVisible(false);
-
-    let elapsed = 0;
-    const dur = 700;
-    const ticker = this.time.addEvent({
-      delay: 16, loop: true,
-      callback: () => {
-        elapsed += 16;
-        const t  = Math.min(elapsed / dur, 1);
-        const bx = (1-t)*(1-t)*sx + 2*(1-t)*t*cpX + t*t*endX;
-        const by = (1-t)*(1-t)*sy + 2*(1-t)*t*cpY + t*t*endY;
-        this._shotSprite.setPosition(bx, by);
-        if (t >= 1) {
-          ticker.remove();
-          this._shotSprite.setVisible(false);
-          this._ballSprite.setVisible(true);
-          this._onShotLanded(result);
-        }
-      },
+  _triggerStealAttempt() {
+    if (this._charging) { this._resetNextStealTimer(); return; }
+    this._stealWarnActive = true;
+    this._stealWarnTimer  = 0.44;
+    this._stealWarnText.setVisible(true);
+    // Defender lunges very close — Z-axis lunge makes them loom large
+    this.tweens.add({
+      targets: this._defPos, y: 432, duration: 320, ease: 'Power2.easeIn',
+    });
+    this.tweens.add({
+      targets: this._stealWarnText,
+      alpha: { from: 1, to: 0.15 },
+      duration: 120, yoyo: true, repeat: 5,
     });
   }
 
-  _onShotLanded(result) {
-    if (result === 'perfect') {
-      this.hoopsScored++;
-      this.consecutiveGreens++;
-      this.heatCheck = this.consecutiveGreens >= 3;
-      const retreat  = this.heatCheck ? 600 : 300;
-      this._wall.x  -= retreat;
-      this._wallLabel.x = this._wall.x;
-      this._wallScaleUp();
-      const msg = this.heatCheck
-        ? `HEAT CHECK! Wall -${retreat}px`
-        : `PERFECT SWISH! Wall -${retreat}px`;
-      this._showMsg(msg, '#00ff88');
-      this.cameras.main.shake(200, 0.01);
-      this._exitLocked();
+  _resetNextStealTimer() {
+    const opp = BB_OPPONENTS[Math.min(_BB.level, BB_OPPONENTS.length - 1)];
+    const base = Math.max(0.8, 2.8 - opp.stealFreq * 3.5);
+    this._nextStealTimer = base + Math.random() * 1.8;
+  }
 
-    } else if (result === 'good') {
-      this.hoopsScored++;
-      this.consecutiveGreens = 0;
-      this.heatCheck = false;
-      this._wallScaleUp();
-      this._showMsg('NICE! Wall paused 1s', '#ffdd44');
-      const saved = this.wallSpeed;
-      this.wallSpeed = 0;
-      this.time.delayedCall(1000, () => { this.wallSpeed = saved; });
-      this._exitLocked();
-
+  _releaseShot() {
+    if (this.state !== 'offense') return;
+    const cv = this._chargeVal;
+    let q;
+    if (cv >= 0.60 && cv <= 0.90) {
+      q = 0.65 + (1 - Math.abs(cv - 0.75) / 0.15) * 0.35;
+    } else if (cv > 0.90) {
+      q = Math.max(0.05, 0.65 - (cv - 0.90) * 6.5);
     } else {
-      this.consecutiveGreens = 0;
-      this.heatCheck = false;
-      this.cameras.main.shake(180, 0.012);
-      this._enterRebound();
+      q = (cv / 0.60) * 0.45;
+    }
+
+    // Openness also grows with depth: deeper = better look
+    const depthOpenBonus = this._playerDepth * 0.25;
+    const made = Math.random() < Math.min(0.95, this.openness + depthOpenBonus) * q;
+    this._stealWarnText.setVisible(false);
+    this._ctrlText.setText('');
+    const playerScreenY = this.PLY - this._playerDispDepth * 130;
+    this._startBallArc(this._playerDispX, playerScreenY - 20, this.RX, this.RY, 880, made, true);
+    this.state = 'shot_arc';
+  }
+
+  _turnoverToAI() {
+    this.state      = 'result';
+    this.possession = 'player';
+    this._showMsg('STOLEN! Reset', '#ff3333');
+    this.cameras.main.shake(220, 0.014);
+    this.time.delayedCall(1100, () => this._startPossession());
+  }
+
+  // ── Defense ──────────────────────────────────────────────────────────────────
+
+  _updateDefense(dt) {
+    if (this._switchWindowActive) {
+      this._switchWindowTimer -= dt;
+      if (this._switchWindowTimer <= 0) {
+        this._switchWindowActive = false;
+        this._switchText.setVisible(false);
+        this._resetNextSwitchTimer();
+      }
+    } else {
+      this._nextSwitchTimer -= dt;
+      if (this._nextSwitchTimer <= 0) this._openStealWindow();
+    }
+
+    this._aiShootTimer -= dt;
+    if (this._aiShootTimer <= 0 && !this._switchWindowActive) this._aiTakesShot();
+  }
+
+  _openStealWindow() {
+    const opp = BB_OPPONENTS[Math.min(_BB.level, BB_OPPONENTS.length - 1)];
+    this._switchWindowActive = true;
+    this._switchWindowTimer  = opp.reactionMs / 1000;
+    this._switchText.setVisible(true);
+    this.tweens.add({
+      targets: this._switchText,
+      alpha: { from: 1, to: 0.15 },
+      duration: 120, yoyo: true, repeat: 5,
+    });
+  }
+
+  _attemptPlayerSteal() {
+    this._switchWindowActive = false;
+    this._switchText.setVisible(false);
+    this._showMsg('STEAL! Your ball', '#ffff44');
+    this.possession = 'player';
+    this.state      = 'result';
+    this.time.delayedCall(900, () => this._startPossession());
+  }
+
+  _resetNextSwitchTimer() {
+    const opp = BB_OPPONENTS[Math.min(_BB.level, BB_OPPONENTS.length - 1)];
+    const base = Math.max(0.8, 2.2 - opp.stealFreq * 2.5);
+    this._nextSwitchTimer = base + Math.random() * 2.5;
+  }
+
+  _resetAiShootTimer() {
+    this._aiShootTimer = 3.8 + Math.random() * 3.2;
+  }
+
+  _aiTakesShot() {
+    this._arcContested = false;
+    this._showMsg('CPU SHOOTING!', '#ff8855', 700);
+    this._ctrlText.setText('↑/W — CONTEST NOW!');
+    // made=null: evaluated on landing (contest can still happen during arc)
+    this._startBallArc(this.W / 2 + this._defPos.x + 14, this._defPos.y - 36, this.RX, this.RY, 860, null, false);
+    this.state = 'shot_arc';
+  }
+
+  // ── Ball arc ──────────────────────────────────────────────────────────────────
+
+  _startBallArc(sx, sy, ex, ey, durMs, made, forPlayer) {
+    this._ballArcSx  = sx; this._ballArcSy = sy;
+    this._ballArcEx  = ex; this._ballArcEy = ey;
+    this._ballArcCx  = (sx + ex) / 2;
+    this._ballArcCy  = Math.min(sy, ey) - 130;
+    this._ballArcT   = 0;
+    this._ballArcDur = durMs / 1000;
+    this._ballArcMade      = made;
+    this._ballArcForPlayer = forPlayer;
+  }
+
+  _updateBallArc(dt) {
+    this._ballArcT = Math.min(1, this._ballArcT + dt / this._ballArcDur);
+    const t  = this._ballArcT;
+    const bx = (1 - t) * (1 - t) * this._ballArcSx + 2 * (1 - t) * t * this._ballArcCx + t * t * this._ballArcEx;
+    const by = (1 - t) * (1 - t) * this._ballArcSy + 2 * (1 - t) * t * this._ballArcCy + t * t * this._ballArcEy;
+    this._ballX = bx;
+    this._ballY = by;
+
+    if (t >= 1) {
+      this.state = 'result';  // prevent re-firing
+      if (this._ballArcForPlayer) {
+        this._onPlayerShotLanded(this._ballArcMade);
+      } else {
+        const opp  = BB_OPPONENTS[Math.min(_BB.level, BB_OPPONENTS.length - 1)];
+        const acc  = opp.shotAcc * (this._arcContested ? 0.52 : 1.0);
+        this._onAiShotLanded(Math.random() < acc);
+      }
     }
   }
 
-  _wallScaleUp() {
-    this.wallScaleFactor *= 1.05;
-    this.wallSpeed = this.PLAYER_SPEED * 0.85 * this.wallScaleFactor;
+  _onPlayerShotLanded(made) {
+    if (made) {
+      this.playerScore++;
+      this._showMsg('SCORE! +1', '#55ff88');
+      this.cameras.main.shake(180, 0.011);
+      GameState.addMoney(3);
+      SaveManager.save();
+    } else {
+      this._showMsg('MISS — reset', '#ff8844');
+    }
+    this.possession = 'player';
+    this._updateHUD();
+    this._checkMatchEnd();
   }
 
-  _exitLocked() {
-    this.state = this.ST_RUNNING;
-    this.player.body.allowGravity = true;
-    this._activeHoop = null;
+  _onAiShotLanded(made) {
+    if (made) {
+      this.aiScore++;
+      this._showMsg('CPU SCORES!', '#ff5555');
+      this.cameras.main.shake(160, 0.009);
+    } else {
+      this._showMsg('CPU MISSES — your ball!', '#55ff88');
+    }
+    this.possession = 'player';
+    this._updateHUD();
+    this._checkMatchEnd();
   }
 
-  _enterRebound() {
-    this.state = this.ST_REBOUND;
-    this._reboundTimer = 1.2;
-    this.player.body.velocity.x = 0;
-    this.player.body.allowGravity = false;
-    this.tweens.add({
-      targets: this.player,
-      y: this.player.y - 12,
-      yoyo: true, repeat: 3, duration: 150,
+  _checkMatchEnd() {
+    if (this.playerScore >= BB_WIN) {
+      this.time.delayedCall(1300, () => this._winMatch());
+    } else {
+      this.time.delayedCall(1400, () => this._startPossession());
+    }
+  }
+
+  _winMatch() {
+    this.state  = 'match_end';
+    _BB.level   = Math.min(_BB.level + 1, BB_OPPONENTS.length - 1);
+    const money = 25 + (_BB.level - 1) * 12;
+    GameState.addMoney(money);
+    SaveManager.save();
+    this._showEndScreen(true, money);
+  }
+
+  _loseMatch() {
+    this.state = 'match_end';
+    this._showEndScreen(false, 0);
+  }
+
+  _showEndScreen(won, money) {
+    const W = this.W, H = this.H;
+    const opp = BB_OPPONENTS[Math.min(_BB.level, BB_OPPONENTS.length - 1)];
+    const sf = 0, d = 50;
+    const PW = 370, PH = 268;
+    const cx = W / 2, top = H / 2 - PH / 2;
+    const endObjs = [];
+    const mk = obj => { endObjs.push(obj); return obj; };
+
+    mk(this.add.rectangle(cx, H / 2, W, H, 0x000000, 0.82).setScrollFactor(sf).setDepth(d));
+    mk(this.add.rectangle(cx, H / 2, PW, PH, 0x050310, 0.97)
+      .setStrokeStyle(2, won ? 0x33aa55 : 0xaa2222).setScrollFactor(sf).setDepth(d));
+    mk(this.add.text(cx, top + 30, won ? 'VICTORY!' : 'DEFEAT', {
+      fontFamily: 'Courier New', fontSize: '26px', color: won ? '#55ff88' : '#ff4444',
+      stroke: '#000', strokeThickness: 4,
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(d));
+    mk(this.add.text(cx, top + 64, `${this.playerScore} baskets`, {
+      fontFamily: 'Courier New', fontSize: '20px', color: '#aabbcc',
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(d));
+    mk(this.add.text(cx, top + 92, won
+      ? `Earned $${money}  ·  Next: ${opp.name}`
+      : 'Try again — same opponent', {
+      fontFamily: 'Courier New', fontSize: '12px',
+      color: won ? '#778899' : '#665544',
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(d));
+
+    if (won && _BB.level < BB_OPPONENTS.length - 1) {
+      mk(this.add.text(cx, top + 112, `New opponent unlocked!`, {
+        fontFamily: 'Courier New', fontSize: '11px', color: '#446655',
+      }).setOrigin(0.5).setScrollFactor(sf).setDepth(d));
+    }
+
+    // Shared button maker
+    const makeBtn = (bx, label, bgCol, strokeCol, action) => {
+      const bg = mk(this.add.rectangle(bx, top + 194, 128, 33, bgCol)
+        .setStrokeStyle(2, strokeCol).setInteractive({ useHandCursor: true })
+        .setScrollFactor(sf).setDepth(d));
+      mk(this.add.text(bx, top + 194, label, {
+        fontFamily: 'Courier New', fontSize: '12px', color: '#ffffff',
+        stroke: '#000', strokeThickness: 2,
+      }).setOrigin(0.5).setScrollFactor(sf).setDepth(d));
+      bg.on('pointerover', () => bg.setFillStyle(
+        Phaser.Display.Color.ValueToColor(bgCol).lighten(12).color));
+      bg.on('pointerout',  () => bg.setFillStyle(bgCol));
+      bg.on('pointerup',   action);
+    };
+
+    makeBtn(cx - 72, 'PLAY AGAIN', 0x0a1f28, 0x2288aa, () => {
+      endObjs.forEach(o => o.destroy());
+      this._showMenu();
     });
-    this._showMsg('BRICK — REBOUND! Try again!', '#ff4444');
+    makeBtn(cx + 72, 'LEAVE GYM', 0x1a0808, 0x884422, () => this._exit());
   }
 
-  _retryShot() {
-    // Re-enter the shot meter — player must make it to proceed
-    this.state = this.ST_LOCKED;
-    this.player.body.allowGravity = false;
-    this._meterPhase = 1;
-    this._meterTime  = 0;
-    this._meterHint.setText('HOLD SPACE → lock POWER');
-    this._powerFill.setSize(20, 0);
-    this._aimFill.setSize(0, 20);
-    this._meter.setVisible(true);
-    this._showMsg('Make the shot to keep running!', '#ffaa33');
+  // ── Visuals ───────────────────────────────────────────────────────────────────
+
+  _updateVisuals(dt) {
+    this._dribblePhase = (this._dribblePhase + dt * 6.5) % (Math.PI * 2);
+
+    // Lerp display positions toward logical targets — gives smooth glide feel
+    const LSPD = 1 - Math.pow(0.04, dt);  // ~96% of gap closed per second
+    this._playerDispX     += (this._playerX     - this._playerDispX)     * LSPD;
+    this._playerDispDepth += (this._playerDepth - this._playerDispDepth) * LSPD;
+
+    // Player screen position uses display (smoothed) values
+    const playerScreenY = this.PLY - this._playerDispDepth * 130;
+    const psc = this.perspScale(playerScreenY);
+    this._pLayers().forEach(s => s.setPosition(this._playerDispX, playerScreenY));
+
+    // Ball dribble position (while not arcing)
+    if (this.state !== 'shot_arc') {
+      if (this.state === 'offense') {
+        const sway = this._crossoverDir * 20 * Math.max(0, this._crossoverTimer / 0.42);
+        this._ballX = this._playerDispX + 18 + sway;
+        this._ballY = playerScreenY - 18 - Math.abs(Math.sin(this._dribblePhase)) * 22;
+      } else if (this.state === 'defense') {
+        this._ballX = this.W / 2 + this._defPos.x + 16;
+        this._ballY = this._defPos.y - 36 - Math.abs(Math.sin(this._dribblePhase)) * 18;
+      }
+    }
+
+    // Player frame selection (animation state machine)
+    const now = Date.now();
+    let fi;
+    if (this._spinActive)            fi = Math.floor(now / 55) % 4 + 12;  // spin: walk-up frames
+    else if (this._crossoverDir < 0) fi = Math.floor(now / 70) % 4 + 4;   // crossover left
+    else if (this._crossoverDir > 0) fi = Math.floor(now / 70) % 4 + 8;   // crossover right
+    else if (this._keys?.up?.isDown) fi = Math.floor(now / 120) % 4 + 12;  // advancing forward
+    else                             fi = Math.floor(now / 220) % 4 + 8;   // idle dribble
+    this._pFrame(fi);
+
+    // Player transparency — 50% so the defender is always visible through them
+    this._pAlpha(this._spinActive
+      ? 0.25 + Math.abs(Math.sin(now / 38)) * 0.35   // flicker during spin
+      : 0.50);                                         // always semi-transparent
+
+    // Player squish on crossover — scale uses perspective depth
+    if (this._crossoverDir !== 0 && this._crossoverTimer > 0) {
+      const prog = 1 - this._crossoverTimer / 0.42;
+      const sq   = Math.sin(prog * Math.PI * 2) * 0.10;
+      const ps   = this.PLAYER_SCALE * psc;
+      this._pLayers().forEach(s => s.setScale(ps * (1 - sq), ps * (1 + sq * 0.4)));
+    } else {
+      const ps = this.PLAYER_SCALE * psc;
+      this._pLayers().forEach(s => s.setScale(ps, ps));
+    }
   }
 
-  // ── HUD refresh ────────────────────────────────────────────────────────────
-
-  _refreshHUD(wallDist) {
-    this._scoreText.setText(`Score: ${this.hoopsScored}`);
-    const d   = Math.max(0, Math.floor(wallDist));
-    const col = d < 120 ? '#ff3333' : d < 280 ? '#ffaa33' : '#88ff88';
-    this._wallText.setText(`Titan: ${d}px`).setColor(col);
-    this._heatText.setText(
-      this.heatCheck            ? '🔥 HEAT CHECK'
-      : this.consecutiveGreens > 0 ? `🟢 ×${this.consecutiveGreens}`
-      : ''
-    );
+  _updateBallSprite() {
+    const t  = Math.max(0, Math.min(1, (this._ballY - this.VP.y) / (this.BY - this.VP.y)));
+    const sc = 0.38 + t * 0.76;
+    this._ballSprite.setPosition(this._ballX, this._ballY).setScale(sc).setDepth(6.5 + t);
   }
 
-  _showMsg(text, color = '#ffff55') {
+  // ── Helpers ───────────────────────────────────────────────────────────────────
+
+  _showMsg(text, color = '#ffff55', duration = 1500) {
     this._msgText.setText(text).setColor(color).setVisible(true);
-    this.time.delayedCall(1600, () => {
-      if (this._msgText) this._msgText.setVisible(false);
+    this.time.delayedCall(duration, () => {
+      if (this._msgText?.active) this._msgText.setVisible(false);
     });
   }
-
-  // ── Game over ──────────────────────────────────────────────────────────────
-
-  _gameOver() {
-    this.state = 'gameover';
-    this.player.body.velocity.x = 0;
-    this._meter.setVisible(false);
-    this.cameras.main.shake(600, 0.03);
-    this._showMsg(`GAME OVER  —  ${this.hoopsScored} hoops`, '#ff2222');
-    this.time.delayedCall(2800, () => this._exit());
-  }
-
-  // ── Exit ───────────────────────────────────────────────────────────────────
 
   _exit() {
     this.scene.stop();

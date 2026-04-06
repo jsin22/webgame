@@ -115,7 +115,46 @@ class BasketballScene extends Phaser.Scene {
     this._buildHUD();
     this._buildMeterUI();
     this._setupInput();
-    this._showMenu();
+
+    // Only guests can play — registered players see the under-construction notice
+    if (window.characterData?.guest) {
+      this._showMenu();
+    } else {
+      this._showUnderConstruction();
+    }
+  }
+
+  _showUnderConstruction() {
+    const W = this.W, H = this.H;
+    const sf = 0, d = 50;
+    const cx = W / 2, cy = H / 2;
+
+    this.add.rectangle(cx, cy, W, H, 0x000000, 0.85).setScrollFactor(sf).setDepth(d);
+    this.add.rectangle(cx, cy, 420, 220, 0x0a0810, 0.97)
+      .setStrokeStyle(2, 0x554422).setScrollFactor(sf).setDepth(d);
+
+    this.add.text(cx, cy - 68, '🚧', { fontSize: '38px' })
+      .setOrigin(0.5).setScrollFactor(sf).setDepth(d);
+    this.add.text(cx, cy - 20, 'UNDER CONSTRUCTION', {
+      fontFamily: 'Courier New', fontSize: '20px', color: '#ffaa33',
+      stroke: '#000', strokeThickness: 4,
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(d);
+    this.add.text(cx, cy + 18, 'The gym is being renovated.\nCheck back soon!', {
+      fontFamily: 'Courier New', fontSize: '13px', color: '#887755',
+      align: 'center',
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(d);
+
+    const btn = this.add.rectangle(cx, cy + 76, 130, 34, 0x1a0e04)
+      .setStrokeStyle(2, 0x886633).setInteractive({ useHandCursor: true })
+      .setScrollFactor(sf).setDepth(d);
+    this.add.text(cx, cy + 76, 'LEAVE GYM', {
+      fontFamily: 'Courier New', fontSize: '13px', color: '#cc9955',
+      stroke: '#000', strokeThickness: 2,
+    }).setOrigin(0.5).setScrollFactor(sf).setDepth(d);
+    btn.on('pointerover', () => btn.setFillStyle(0x2a1808));
+    btn.on('pointerout',  () => btn.setFillStyle(0x1a0e04));
+    btn.on('pointerup',   () => this._exit());
+    this.input.keyboard.once('keydown-ESC', () => this._exit());
   }
 
   // ── Textures ────────────────────────────────────────────────────────────────

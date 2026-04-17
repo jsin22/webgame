@@ -1,6 +1,6 @@
 /**
- * Unit tests for js/scenes/DinerScene.js logic
- * Run: npm test
+ * Unit tests for js/scenes/DinerScene.js logic (Greasy Spoon 2.0)
+ * Run: npx jest tests/DinerState.test.js
  */
 
 const fs = require('fs');
@@ -19,13 +19,25 @@ const { _DS, DINER_BALANCE } = dinerLogic;
 function resetDinerState() {
   _DS.cash = DINER_BALANCE.STARTING_CASH;
   _DS.reputation = DINER_BALANCE.STARTING_REP;
-  _DS.grillCond = 100;
   _DS.shiftsDone = 0;
   _DS.day = 1;
-  _DS.inv.meat.qty = 0;
-  _DS.inv.buns.qty = 0;
-  _DS.inv.spuds.qty = 0;
-  _DS.inv.coffee.qty = 0;
+  _DS.weather = 'Clear';
+  
+  // Equipment
+  _DS.equip.grill = 100;
+  _DS.equip.toaster = 100;
+  _DS.equip.urn = 100;
+
+  // Prep
+  _DS.prep.soup = 0;
+  _DS.prep.bakery = 0;
+
+  // Inventory Groups
+  _DS.inv.protein.qty = 20;
+  _DS.inv.grain.qty = 20;
+  _DS.inv.produce.qty = 20;
+  _DS.inv.coffee.qty = 50;
+  
   _DS._prices = null;
 }
 
@@ -40,77 +52,81 @@ describe('rollDay', () => {
     expect(_DS.day).toBe(startDay + 1);
   });
 
-  test('generates valid prices', () => {
+  test('generates valid prices for NYC groups', () => {
     _DS.rollDay();
-    for (const [item, price] of Object.entries(_DS._prices)) {
-      const [lo, hi] = _DS.BASE_PRICE[item];
-      // Price could be boosted by event, so we just check it exists and is positive
+    for (const [group, price] of Object.entries(_DS._prices)) {
       expect(price).toBeGreaterThan(0);
+      const [lo, hi] = _DS.BASE_PRICE[group];
+      expect(price).toBeGreaterThan(lo * 0.5);
+      expect(price).toBeLessThan(hi * 2.5);
     }
   });
 
-  test('Frost in Brazil event doubles coffee price', () => {
-    const frostEvent = _DS.EVENTS.find(e => e.name === 'Frost in Brazil');
-    // Seed a normal price by running without event first
-    _DS.rollDay(_DS.EVENTS[0]);
+  test('Rainy Commute event boosts coffee demand', () => {
+    const rainyEvent = _DS.EVENTS.find(e => e.name === 'Rainy Commute');
     
-    // Now set the frost event and roll again
-    _DS.rollDay(frostEvent);
-    const boostedPrice = _DS._prices.coffee;
-
-    // boostedPrice should be in range [lo*2, hi*2]
-    const [lo, hi] = _DS.BASE_PRICE.coffee;
-    expect(boostedPrice).toBeGreaterThanOrEqual(lo * frostEvent.boost.coffee * 0.9);
-    expect(boostedPrice).toBeLessThanOrEqual(hi * frostEvent.boost.coffee * 1.1);
+    // Normal day
+    _DS.event = _DS.EVENTS[0];
+    _DS.weather = 'Clear';
+    const normalDemand = _DS.demand('coffee');
+    
+    // Rainy day
+    _DS.event = rainyEvent;
+    _DS.weather = 'Clear'; // Keep weather same to isolate event boost
+    const coffeeDemand = _DS.demand('coffee');
+    
+    // Boost is 1.8 * 0.9 = 1.62
+    expect(coffeeDemand).toBeCloseTo(normalDemand * 1.62, 1);
   });
 });
 
 // ── demand ────────────────────────────────────────────────────────────────────
 
 describe('demand', () => {
-  test('returns 0 when reputation is at minimum', () => {
-    _DS.reputation = DINER_BALANCE.MIN_REP;
-    _DS.rollDay(_DS.EVENTS[0]);
-    _DS.weather = 'Heat'; // Harsh weather
-    // High price
-    _DS.menu.burger.price = 50; 
-    const d = _DS.demand('burger');
-    expect(d).toBeLessThan(10); 
+  test('returns 0 when equipment is broken', () => {
+    _DS.equip.toaster = 0;
+    const d = _DS.demand('standard'); // "Standard" needs toaster
+    expect(d).toBe(0);
   });
 
-  test('Event multipliers affect demand', () => {
-    _DS.reputation = 3.0;
+  test('NY Rush Hour multipliers affect demand', () => {
+    _DS.reputation = 3.5;
     _DS.weather = 'Clear';
     
-    // Road Works (-25%)
-    const roadWorks = _DS.EVENTS.find(e => e.name === 'Road Works');
-    _DS.rollDay(roadWorks);
-    const d1 = _DS.demand('burger');
+    // Sunday Brunch Rush (tMult: 2.0)
+    const brunch = _DS.EVENTS.find(e => e.name === 'Sunday Brunch Rush');
+    _DS.event = brunch;
+    const dBrunch = _DS.demand('burger');
 
-    // Local Parade (+35%)
-    const parade = _DS.EVENTS.find(e => e.name === 'Local Parade');
-    _DS.rollDay(parade);
-    const d2 = _DS.demand('burger');
+    _DS.event = _DS.EVENTS[0]; // Normal day
+    const dNormal = _DS.demand('burger');
 
-    expect(d2).toBeGreaterThan(d1);
+    expect(dBrunch).toBeCloseTo(dNormal * 2.0, 1);
   });
 });
 
-// ── proc logic ────────────────────────────────────────────────────────────────
+// ── simulation logic ──────────────────────────────────────────────────────────
 
-describe('procure', () => {
-  // We can't test scene-level methods like procureItem directly if they use Phaser UI,
-  // but we can test the state changes they would trigger.
-  test('updates inventory and cash', () => {
+describe('runShift', () => {
+  test('consumes inventory and generates profit', () => {
     const startCash = _DS.cash;
-    const qty = 10;
-    const price = 5.5;
+    _DS.prep.soup = 20;
+    _DS.prep.bakery = 20;
     
-    // Manual state update mimic
-    _DS.cash -= qty * price;
-    _DS.inv.meat.qty += qty;
+    const report = _DS.runShift();
     
-    expect(_DS.cash).toBe(startCash - 55);
-    expect(_DS.inv.meat.qty).toBe(10);
+    expect(report.grossRevenue).toBeGreaterThan(0);
+    expect(_DS.cash).not.toBe(startCash);
+    expect(_DS.equip.grill).toBeLessThan(100);
+  });
+
+  test('Health Inspector fines for dirty grill', () => {
+    const inspectorEvent = _DS.EVENTS.find(e => e.name === 'Health Inspector');
+    _DS.event = inspectorEvent;
+    _DS.equip.grill = 20; // Poor condition
+    
+    const report = _DS.runShift();
+    expect(report.fines).toBe(200);
+    expect(_DS.reputation).toBeLessThan(3.5);
   });
 });

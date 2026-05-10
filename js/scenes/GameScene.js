@@ -149,54 +149,25 @@ class GameScene extends Phaser.Scene {
     this.minimapDot.setDepth(10);
     this.cameras.main.ignore(this.minimapDot);
 
-    // ── Casino entrance ──────────────────────────────────────────────────────
-    const casinoObj = map.findObject('objects', o => o.name === 'casino_entrance');
-    if (casinoObj) {
-      this.casinoEntrancePos = {
-        x: casinoObj.x + casinoObj.width  / 2,
-        y: casinoObj.y + casinoObj.height / 2,
-      };
-    }
-    this.casinoActive = false;
-
-    this.casinoPrompt = this.add.text(0, 0, 'Press E to enter Casino', {
-      fontFamily: 'Courier New', fontSize: '12px', color: '#ffd700',
-      stroke: '#000000', strokeThickness: 3,
-      backgroundColor: '#00000066', padding: { x: 6, y: 3 },
-    }).setOrigin(0.5, 1).setDepth(5).setVisible(false);
+    // ── Venues (data-driven) ─────────────────────────────────────────────────
+    // Each entry drives entrance detection, prompt text, scene launch, and exit.
+    // To add a new venue: append an entry here and add it to generate_map.py.
+    this._venues = [
+      { key: 'casino',   scene: 'CasinoLobbyScene', label: 'Casino',   color: '#ffd700', yOffset: 96 },
+      { key: 'pizzeria', scene: 'PizzeriaScene',     label: 'Pizzeria', color: '#ff9900', yOffset: 80,
+        onExit: () => this._refreshHUD() },
+      { key: 'gym',      scene: 'BasketballScene',   label: 'Gym',      color: '#ff8820', yOffset: 80 },
+      { key: 'home',     scene: 'HomeScene',         label: 'Home',     color: '#a0d0ff', yOffset: 80,
+        onEnter: () => { GameState._restingAtHome = true; },
+        onExit:  () => { GameState._restingAtHome = false; this._refreshHUD(); } },
+      { key: 'diner',    scene: 'DinerScene',        label: 'Diner',    color: '#ff6633', yOffset: 80,
+        onExit: () => this._refreshHUD() },
+    ];
+    this._setupVenues(map);
 
     this.inputKeys.e = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
 
-    this.game.events.on('casinoExit', () => {
-      this.casinoActive = false;
-      document.getElementById('hud').style.display = '';
-      if (this.player) this.player.y += 96;
-    }, this);
-
-    // ── Pizzeria entrance ─────────────────────────────────────────────────────
-    const pizzeriaObj = map.findObject('objects', o => o.name === 'pizzeria_entrance');
-    if (pizzeriaObj) {
-      this.pizzeriaEntrancePos = {
-        x: pizzeriaObj.x + pizzeriaObj.width  / 2,
-        y: pizzeriaObj.y + pizzeriaObj.height / 2,
-      };
-    }
-    this.pizzeriaActive = false;
-
-    this.pizzeriaPrompt = this.add.text(0, 0, 'Press E to enter Pizzeria', {
-      fontFamily: 'Courier New', fontSize: '12px', color: '#ff9900',
-      stroke: '#000000', strokeThickness: 3,
-      backgroundColor: '#00000066', padding: { x: 6, y: 3 },
-    }).setOrigin(0.5, 1).setDepth(5).setVisible(false);
-
-    this.game.events.on('pizzeriaExit', () => {
-      this.pizzeriaActive = false;
-      document.getElementById('hud').style.display = '';
-      if (this.player) this.player.y += 80;
-      this._refreshHUD();
-    }, this);
-
-    // Refresh HUD whenever this scene resumes (e.g. returning from casino)
+    // Refresh HUD whenever this scene resumes (e.g. returning from a venue)
     this.events.on('resume', () => this._refreshHUD(), this);
 
     // ── HUD DOM refs ─────────────────────────────────────────────────────────
@@ -244,75 +215,6 @@ class GameScene extends Phaser.Scene {
     ).setDepth(1.5);
     this._updateDayNight();
 
-    // ── Gym entrance ─────────────────────────────────────────────────────────
-    const gymObj = map.findObject('objects', o => o.name === 'gym_entrance');
-    if (gymObj) {
-      this.gymEntrancePos = {
-        x: gymObj.x + gymObj.width  / 2,
-        y: gymObj.y + gymObj.height / 2,
-      };
-    }
-    this.gymActive = false;
-
-    this.gymPrompt = this.add.text(0, 0, 'Press E to enter Gym', {
-      fontFamily: 'Courier New', fontSize: '12px', color: '#ff8820',
-      stroke: '#000000', strokeThickness: 3,
-      backgroundColor: '#00000066', padding: { x: 6, y: 3 },
-    }).setOrigin(0.5, 1).setDepth(5).setVisible(false);
-
-    this.game.events.on('basketballExit', () => {
-      this.gymActive = false;
-      document.getElementById('hud').style.display = '';
-      if (this.player) this.player.y += 80;
-    }, this);
-
-    // ── Home entrance ─────────────────────────────────────────────────────────
-    const homeObj = map.findObject('objects', o => o.name === 'home_entrance');
-    if (homeObj) {
-      this.homeEntrancePos = {
-        x: homeObj.x + homeObj.width  / 2,
-        y: homeObj.y + homeObj.height / 2,
-      };
-    }
-    this.homeActive = false;
-
-    this.homePrompt = this.add.text(0, 0, 'Press E to enter Home', {
-      fontFamily: 'Courier New', fontSize: '12px', color: '#a0d0ff',
-      stroke: '#000000', strokeThickness: 3,
-      backgroundColor: '#00000066', padding: { x: 6, y: 3 },
-    }).setOrigin(0.5, 1).setDepth(5).setVisible(false);
-
-    this.game.events.on('homeExit', () => {
-      this.homeActive = false;
-      GameState._restingAtHome = false;
-      document.getElementById('hud').style.display = '';
-      if (this.player) this.player.y += 80;
-      this._refreshHUD();
-    }, this);
-
-    // ── Diner entrance ────────────────────────────────────────────────────────
-    const dinerObj = map.findObject('objects', o => o.name === 'diner_entrance');
-    if (dinerObj) {
-      this.dinerEntrancePos = {
-        x: dinerObj.x + dinerObj.width  / 2,
-        y: dinerObj.y + dinerObj.height / 2,
-      };
-    }
-    this.dinerActive = false;
-
-    this.dinerPrompt = this.add.text(0, 0, 'Press E to enter Diner', {
-      fontFamily: 'Courier New', fontSize: '12px', color: '#ff6633',
-      stroke: '#000000', strokeThickness: 3,
-      backgroundColor: '#00000066', padding: { x: 6, y: 3 },
-    }).setOrigin(0.5, 1).setDepth(5).setVisible(false);
-
-    this.game.events.on('dinerExit', () => {
-      this.dinerActive = false;
-      document.getElementById('hud').style.display = '';
-      if (this.player) this.player.y += 80;
-      this._refreshHUD();
-    }, this);
-
     // ── World clock (BUG-001) ─────────────────────────────────────────────────
     // Time is now server-authoritative. world_tick fires every real second.
     if (window.socket) {
@@ -320,7 +222,8 @@ class GameScene extends Phaser.Scene {
         GameState.applyWorldTick(tick);
         this._updateDayNight();
         // Check faint (only outside home — faint penalties don't apply while resting)
-        if (GameState.energy <= 0 && !this.homeActive) this._triggerFaint();
+        const homeVenue = this._venues.find(v => v.key === 'home');
+        if (GameState.energy <= 0 && !homeVenue?.active) this._triggerFaint();
         // Periodic autosave every 60 ticks (~1 real minute) to persist energy/HP
         this._saveTickCounter = (this._saveTickCounter || 0) + 1;
         if (this._saveTickCounter >= 60) {
@@ -386,80 +289,21 @@ class GameScene extends Phaser.Scene {
     this.minimapDot.fillStyle(0xf0e060, 1);
     this.minimapDot.fillCircle(this.player.x, this.player.y, 12);
 
-    // ── Casino entrance proximity ─────────────────────────────────────────────
-    if (this.casinoEntrancePos && !this.casinoActive) {
-      const dx   = this.player.x - this.casinoEntrancePos.x;
-      const dy   = this.player.y - this.casinoEntrancePos.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      const near = dist < 80;
-
-      this.casinoPrompt
-        .setVisible(near)
-        .setPosition(this.player.x, this.player.y - 44);
-
-      if (near && Phaser.Input.Keyboard.JustDown(this.inputKeys.e)) {
-        this._enterCasino();
+    // ── Venue entrance proximity ──────────────────────────────────────────────
+    const anyVenueActive = this._venues.some(v => v.active);
+    for (const v of this._venues) {
+      if (!v.pos || v.active || anyVenueActive) {
+        if (!v.active) v.prompt.setVisible(false);
+        continue;
       }
-    }
-
-    // ── Pizzeria entrance proximity ───────────────────────────────────────────
-    if (this.pizzeriaEntrancePos && !this.pizzeriaActive && !this.casinoActive && !this.dinerActive) {
-      const dx   = this.player.x - this.pizzeriaEntrancePos.x;
-      const dy   = this.player.y - this.pizzeriaEntrancePos.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      const near = dist < 80;
-
-      this.pizzeriaPrompt
-        .setVisible(near)
-        .setPosition(this.player.x, this.player.y - 44);
-
-      if (near && Phaser.Input.Keyboard.JustDown(this.inputKeys.e)) {
-        this._enterPizzeria();
-      }
-    }
-
-    // ── Gym entrance proximity ────────────────────────────────────────────────
-    if (this.gymEntrancePos && !this.gymActive && !this.casinoActive && !this.pizzeriaActive && !this.homeActive && !this.dinerActive) {
-      const dx   = this.player.x - this.gymEntrancePos.x;
-      const dy   = this.player.y - this.gymEntrancePos.y;
+      const dx   = this.player.x - v.pos.x;
+      const dy   = this.player.y - v.pos.y;
       const near = Math.sqrt(dx * dx + dy * dy) < 80;
 
-      this.gymPrompt
-        .setVisible(near)
-        .setPosition(this.player.x, this.player.y - 44);
+      v.prompt.setVisible(near).setPosition(this.player.x, this.player.y - 44);
 
       if (near && Phaser.Input.Keyboard.JustDown(this.inputKeys.e)) {
-        this._enterGym();
-      }
-    }
-
-    // ── Home entrance proximity ───────────────────────────────────────────────
-    if (this.homeEntrancePos && !this.homeActive && !this.casinoActive && !this.pizzeriaActive && !this.gymActive && !this.dinerActive) {
-      const dx   = this.player.x - this.homeEntrancePos.x;
-      const dy   = this.player.y - this.homeEntrancePos.y;
-      const near = Math.sqrt(dx * dx + dy * dy) < 80;
-
-      this.homePrompt
-        .setVisible(near)
-        .setPosition(this.player.x, this.player.y - 44);
-
-      if (near && Phaser.Input.Keyboard.JustDown(this.inputKeys.e)) {
-        this._enterHome();
-      }
-    }
-
-    // ── Diner entrance proximity ──────────────────────────────────────────────
-    if (this.dinerEntrancePos && !this.dinerActive && !this.casinoActive && !this.pizzeriaActive && !this.gymActive && !this.homeActive) {
-      const dx   = this.player.x - this.dinerEntrancePos.x;
-      const dy   = this.player.y - this.dinerEntrancePos.y;
-      const near = Math.sqrt(dx * dx + dy * dy) < 80;
-
-      this.dinerPrompt
-        .setVisible(near)
-        .setPosition(this.player.x, this.player.y - 44);
-
-      if (near && Phaser.Input.Keyboard.JustDown(this.inputKeys.e)) {
-        this._enterDiner();
+        this._enterVenue(v);
       }
     }
 
@@ -832,15 +676,45 @@ class GameScene extends Phaser.Scene {
     }
   }
 
-  _enterHome() {
-    this.homeActive = true;
-    this.homePrompt.setVisible(false);
+  // ── Venue helpers ─────────────────────────────────────────────────────────
+
+  /**
+   * For each venue config, find its map entrance object, create the prompt
+   * text, and wire up the exit game event.
+   */
+  _setupVenues(map) {
+    // The gym emits 'basketballExit' instead of 'gymExit' — special-case the event name.
+    const exitEvent = key => key === 'gym' ? 'basketballExit' : `${key}Exit`;
+
+    for (const v of this._venues) {
+      const obj = map.findObject('objects', o => o.name === `${v.key}_entrance`);
+      v.pos    = obj ? { x: obj.x + obj.width / 2, y: obj.y + obj.height / 2 } : null;
+      v.active = false;
+      v.prompt = this.add.text(0, 0, `Press E to enter ${v.label}`, {
+        fontFamily: 'Courier New', fontSize: '12px', color: v.color,
+        stroke: '#000000', strokeThickness: 3,
+        backgroundColor: '#00000066', padding: { x: 6, y: 3 },
+      }).setOrigin(0.5, 1).setDepth(5).setVisible(false);
+
+      this.game.events.on(exitEvent(v.key), () => {
+        v.active = false;
+        document.getElementById('hud').style.display = '';
+        if (this.player) this.player.y += v.yOffset;
+        if (v.onExit) v.onExit();
+      }, this);
+    }
+  }
+
+  /** Launch a venue scene and mark it active. */
+  _enterVenue(v) {
+    v.active = true;
+    v.prompt.setVisible(false);
     this.player.setVelocity(0, 0);
-    GameState._restingAtHome = true;
+    if (v.onEnter) v.onEnter();
     document.getElementById('hud').style.display = 'none';
     this._hidePlayerMenu();
     this.scene.pause();
-    this.scene.launch('HomeScene');
+    this.scene.launch(v.scene);
   }
 
   _triggerFaint() {
@@ -852,7 +726,8 @@ class GameScene extends Phaser.Scene {
     GameState.addMoney(-cashLost);
     GameState.addHp(0);   // emit hpChanged
     // Teleport to home entrance (or spawn if home not yet placed)
-    const dest = this.homeEntrancePos || { x: 976, y: 976 };
+    const homeVenue = this._venues.find(v => v.key === 'home');
+    const dest = homeVenue?.pos || { x: 976, y: 976 };
     this.player.setPosition(dest.x, dest.y);
     // Show faint message briefly
     const msg = this.add.text(this.scale.width / 2, this.scale.height / 2,
@@ -868,46 +743,6 @@ class GameScene extends Phaser.Scene {
     if (!this.nightOverlay) return;
     const isNight = GameState.hour >= 20 || GameState.hour < 7;
     this.nightOverlay.setAlpha(isNight ? 0.3 : 0);
-  }
-
-  _enterGym() {
-    this.gymActive = true;
-    this.gymPrompt.setVisible(false);
-    this.player.setVelocity(0, 0);
-    document.getElementById('hud').style.display = 'none';
-    this._hidePlayerMenu();
-    this.scene.pause();
-    this.scene.launch('BasketballScene');
-  }
-
-  _enterPizzeria() {
-    this.pizzeriaActive = true;
-    this.pizzeriaPrompt.setVisible(false);
-    this.player.setVelocity(0, 0);
-    document.getElementById('hud').style.display = 'none';
-    this._hidePlayerMenu();
-    this.scene.pause();
-    this.scene.launch('PizzeriaScene');
-  }
-
-  _enterDiner() {
-    this.dinerActive = true;
-    this.dinerPrompt.setVisible(false);
-    this.player.setVelocity(0, 0);
-    document.getElementById('hud').style.display = 'none';
-    this._hidePlayerMenu();
-    this.scene.pause();
-    this.scene.launch('DinerScene');
-  }
-
-  _enterCasino() {
-    this.casinoActive = true;
-    this.casinoPrompt.setVisible(false);
-    this.player.setVelocity(0, 0);
-    document.getElementById('hud').style.display = 'none';
-    this._hidePlayerMenu();
-    this.scene.pause();
-    this.scene.launch('CasinoLobbyScene');
   }
 
   _refreshHUD() {

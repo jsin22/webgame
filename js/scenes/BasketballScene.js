@@ -1,1004 +1,728 @@
 /**
- * BasketballScene — "Super Pro-Hoops"
+ * BasketballScene — "NBA Jam Style 1-on-1"
  *
- * 1-on-1 behind-the-back basketball with Super Punch-Out!! inspiration.
+ * Side-view arcade basketball.
  *
- * GOAL: Score 5 baskets to move to the next round.
- * LOSS: 3 misses and you lose the round.
- *
- * OFFENSE  ARROWS  Move Left/Right/Up/Down
- *          D       Crossover (beat steal window)
- *          S       Spin move (beat steal window)
- *          SPACE   Hold to charge shot, release in green zone
- *
- * ESC — leave gym
+ * CONTROLS:
+ * - ARROWS: Move
+ * - SPACE: Jump (release at apex to shoot; turbo dunk in paint zone)
+ * - SHIFT: Turbo — 1.5x speed/jump, enables dunk in paint zone
+ * - D: Shove (stuns opponent and knocks ball loose)
+ * - ESC: Quit
  */
 
-// Persistent state across gym visits
-const _BB = (() => ({ round: 0 }))();
-
-const BB_OPPONENTS = [
-  {
-    name: 'BIG DOG',
-    difficulty: 'Easy',
-    skin: 0xd4956a,
-    shirt: 0xff4444,
-    pants: 0x222222,
-    reactionMs: 750,
-    stealFreq: 0.15,
-    speed: 350
-  },
-  {
-    name: 'THE FLASH',
-    difficulty: 'Normal',
-    skin: 0x8d5524,
-    shirt: 0xeeee00,
-    pants: 0x4444ff,
-    reactionMs: 500,
-    stealFreq: 0.30,
-    speed: 500
-  },
-  {
-    name: 'GRANDMASTER',
-    difficulty: 'Hard',
-    skin: 0xebb495,
-    shirt: 0x333333,
-    pants: 0xff8800,
-    reactionMs: 320,
-    stealFreq: 0.55,
-    speed: 650
-  }
-];
-
+// Constants for test compatibility
+const _BB = { round: 0 };
 const BB_GOAL = 5;
 const BB_MAX_MISSES = 3;
-const BASE_CHARACTER_SCALE = 2.0;
+const BB_OPPONENTS = [
+  { name: 'BIG DOG',     difficulty: 'Easy',   speed: 250, stealFreq: 0.1 },
+  { name: 'THE FLASH',   difficulty: 'Normal', speed: 350, stealFreq: 0.2 },
+  { name: 'GRANDMASTER', difficulty: 'Hard',   speed: 450, stealFreq: 0.3 }
+];
+
+const BB_TURBO_MAX      = 100;
+const BB_TURBO_DRAIN    = 30;   // per second while active
+const BB_TURBO_REGEN    = 15;   // per second while inactive
+const BB_TURBO_MULT     = 1.5;  // speed & jump multiplier
+const BB_PAINT_X        = 550;  // x threshold for "paint zone" (near hoop)
+const BB_STUN_DURATION  = 900;  // ms
 
 class BasketballScene extends Phaser.Scene {
-  constructor() {
-    super({ key: 'BasketballScene' });
-  }
-
-  create() {
-    const W = this.W = this.scale.width;
-    const H = this.H = this.scale.height;
-
-    this.physics.world.gravity.y = 0;
-
-    // Perspective Geometry
-    this.VP           = { x: W / 2, y: 182 };  // vanishing point
-    this.BY           = 548;                    // court bottom y
-    this.RX           = W / 2;                  // rim x
-    this.RY           = 152;                    // rim y
-    this.PLY          = 454;                    // player sprite base y
-
-    // Match State
-    this.score  = 0;
-    this.misses = 0;
-    this.state  = 'menu'; // menu, offense, shot_arc, result, match_end
-
-    // Gameplay Variables
-    this.openness          = 0.3;
-    this.shotClock         = 10.0;
-    this._shotState        = 'none'; // none, pwr_hold, aim_tap
-    this._pwrVal           = 0;      // 0..1
-    this._pwrDir           = 1;
-    this._aimVal           = 0.5;    // 0..1
-    this._aimDir           = 1;
-    this._stealWarnActive  = false;
-    this._stealWarnTimer   = 0;
-    this._stealDodgeActive = false;
-    this._stealDodgeTimer  = 0;
-    this._blockActive      = false;
-    this._blockTimer       = 0;
-    this._nextStealTimer   = 0;
-    this._crossoverDir     = 0;
-    this._crossoverTimer   = 0;
-    this._spinActive       = false;
-    this._spinTimer        = 0;
-    this._defenderFrozen   = false;
-    this._playerX          = W / 2;
-    this._playerDepth      = 0.1; // 0..1
-    this._pastDefender     = false;
-
-    // Display Smoothing
-    this._playerDispX     = W / 2;
-    this._playerDispDepth = 0.1;
-
-    this._inputBuffer = [];
-    this._bufferTime  = 0;
-
-    // Ball
-    this._ballX = W / 2 + 18;
-    this._ballY = this.PLY - 20;
-    this._dribblePhase = 0;
-
-    // Setup
-    this._buildTextures();
-    this._drawBg();
-    this._drawCourt();
-    this._drawHoop();
-    this._buildPlayer();
-    this._buildOpponent();
-    this._buildBall();
-    this._buildHUD();
-    this._buildMeterUI();
-    this._setupInput();
-
-    this._showMenu();
-  }
-
-  // ── Textures ────────────────────────────────────────────────────────────────
-
-  _buildTextures() {
-    if (!this.textures.exists('bb_ball')) {
-      const g = this.make.graphics({ add: false });
-      g.fillStyle(0xe86010); g.fillCircle(13, 13, 13);
-      g.lineStyle(1.5, 0x992200); g.strokeCircle(13, 13, 13);
-      g.lineBetween(13, 0, 13, 26); g.lineBetween(0, 13, 26, 13);
-      g.beginPath(); g.arc(13, 13, 8, 0.2 * Math.PI, 0.8 * Math.PI); g.strokePath();
-      g.beginPath(); g.arc(13, 13, 8, 1.2 * Math.PI, 1.8 * Math.PI); g.strokePath();
-      g.generateTexture('bb_ball', 26, 26);
-      g.destroy();
-    }
-  }
-
-  // ── Visuals ─────────────────────────────────────────────────────────────────
-
-  _drawBg() {
-    const g = this.add.graphics();
-    const W = this.W, vpy = this.VP.y;
-    g.fillStyle(0x09051a); g.fillRect(0, 0, W, vpy);
-    g.fillStyle(0x14102a); g.fillRect(0, vpy, W, 28);
-    g.fillStyle(0x0f0c22); g.fillRect(0, vpy + 28, W, 16);
-    // Scoreboard
-    g.fillStyle(0x1a1430); g.fillRect(W / 2 - 80, 38, 160, 70);
-    g.lineStyle(2, 0x2a3460); g.strokeRect(W / 2 - 80, 38, 160, 70);
-  }
-
-  _drawCourt() {
-    const g = this.add.graphics();
-    const vpx = this.VP.x, vpy = this.VP.y, BY = this.BY, W = this.W;
-    const perspX = (x0, y) => x0 + (vpx - x0) * (BY - y) / (BY - vpy);
-    // Floor
-    for (let y = vpy + 44; y < BY; y += 14) {
-      const t = (y - vpy) / (BY - vpy);
-      const r = Math.round(0x22 + t * 0x33);
-      const gg = Math.round(0x11 + t * 0x22);
-      const b  = Math.round(0x08 + t * 0x11);
-      g.fillStyle((r << 16) | (gg << 8) | b);
-      g.fillRect(0, y, W, 14);
-    }
-    // Lines
-    g.lineStyle(1.5, 0x6a4618, 0.4);
-    for (let bx = 0; bx <= W; bx += 64) g.lineBetween(bx, BY, perspX(bx, vpy + 6), vpy + 6);
-    for (const hy of [438, 368, 300, 240]) g.lineBetween(perspX(0, hy), hy, perspX(W, hy), hy);
-    // Paint
-    g.lineStyle(2, 0x8a6830, 0.6);
-    const KW = 120;
-    g.lineBetween(perspX(vpx - KW, BY), BY, perspX(vpx - KW, 242), 242);
-    g.lineBetween(perspX(vpx + KW, BY), BY, perspX(vpx + KW, 242), 242);
-    g.lineBetween(perspX(vpx - KW, 242), 242, perspX(vpx + KW, 242), 242);
-  }
-
-  _drawHoop() {
-    const g = this.add.graphics().setDepth(2);
-    const rx = this.RX, ry = this.RY;
-    g.fillStyle(0xeeeeee); g.fillRect(rx - 50, ry - 70, 100, 60);
-    g.lineStyle(2, 0x888888); g.strokeRect(rx - 50, ry - 70, 100, 60);
-    g.lineStyle(2, 0xff0000); g.strokeRect(rx - 25, ry - 45, 50, 32);
-    g.lineStyle(6, 0xff5500); g.strokeEllipse(rx, ry + 5, 50, 18);
-    g.lineStyle(1, 0xffffff, 0.5);
-    for (let i = 0; i <= 6; i++) {
-      const nx = rx - 24 + 48 / 6 * i;
-      g.lineBetween(nx, ry + 5, nx + (i - 3) * 4, ry + 40);
-    }
-  }
-
-  _buildPlayer() {
-    const cd = window.characterData || {};
-    const t  = h => parseInt((h || '#ffffff').replace('#', ''), 16);
-    const bk = cd.gender === 'female' ? 'player_body_female' : 'player_body_male';
-    const s  = BASE_CHARACTER_SCALE;
-    this._pBody  = this.add.sprite(0, 0, bk, 8).setDepth(6.0).setAlpha(0.5).setScale(s);
-    this._pShirt = this.add.sprite(0, 0, 'player_shirt', 8).setDepth(6.1).setAlpha(0.5).setTint(t(cd.colors?.shirt)).setScale(s);
-    this._pPants = this.add.sprite(0, 0, 'player_pants', 8).setDepth(6.2).setAlpha(0.5).setTint(t(cd.colors?.pants)).setScale(s);
-    this._pShoes = this.add.sprite(0, 0, 'player_shoes', 8).setDepth(6.3).setAlpha(0.5).setTint(t(cd.colors?.shoes)).setScale(s);
-    this._pLayers = [this._pBody, this._pShirt, this._pPants, this._pShoes];
-  }
-
-  _buildOpponent() {
-    const opp = BB_OPPONENTS[_BB.round % BB_OPPONENTS.length];
-    const s   = BASE_CHARACTER_SCALE;
-    this._oBody  = this.add.sprite(0, 0, 'player_body_male', 0).setDepth(5.0).setTint(opp.skin).setScale(s);
-    this._oShirt = this.add.sprite(0, 0, 'player_shirt', 0).setDepth(5.1).setTint(opp.shirt).setScale(s);
-    this._oPants = this.add.sprite(0, 0, 'player_pants', 0).setDepth(5.2).setTint(opp.pants).setScale(s);
-    this._oShoes = this.add.sprite(0, 0, 'player_shoes', 0).setDepth(5.3).setScale(s);
-    this._oLayers = [this._oBody, this._oShirt, this._oPants, this._oShoes];
-    this._oPos = { x: 0, y: 340 };
-  }
-
-  _buildBall() {
-    this._ball = this.add.image(0, 0, 'bb_ball').setDepth(8);
-  }
-
-  _buildHUD() {
-    const W = this.W, H = this.H;
-    this._hudText = this.add.text(W / 2, 40, '', {
-      fontFamily: 'Courier New', fontSize: '20px', color: '#ffffff',
-      stroke: '#000', strokeThickness: 4, align: 'center'
-    }).setOrigin(0.5).setDepth(100).setVisible(false);
-
-    this._missText = this.add.text(W / 2, 80, '', {
-      fontFamily: 'Courier New', fontSize: '16px', color: '#ff5555',
-      stroke: '#000', strokeThickness: 3
-    }).setOrigin(0.5).setDepth(100).setVisible(false);
-
-    this._openText = this.add.text(W / 2, 110, '', {
-      fontFamily: 'Courier New', fontSize: '20px', color: '#00ffcc',
-      stroke: '#000', strokeThickness: 3
-    }).setOrigin(0.5).setDepth(100).setVisible(false);
-
-    this._clockText = this.add.text(W / 2, 140, '', {
-      fontFamily: 'Courier New', fontSize: '24px', color: '#ffffff',
-      stroke: '#000', strokeThickness: 4
-    }).setOrigin(0.5).setDepth(100).setVisible(false);
-
-    this._msgText = this.add.text(W / 2, H / 2 - 40, '', {
-      fontFamily: 'Courier New', fontSize: '32px', color: '#ffff00',
-      stroke: '#000', strokeThickness: 6
-    }).setOrigin(0.5).setDepth(101).setVisible(false);
-
-    this._stealWarn = this.add.text(W / 2, H / 2 + 60, 'STEAL!!', {
-      fontFamily: 'Courier New', fontSize: '40px', color: '#ff0000',
-      stroke: '#000', strokeThickness: 8
-    }).setOrigin(0.5).setDepth(101).setVisible(false);
-  }
-
-  _buildMeterUI() {
-    const W = this.W, H = this.H;
-    this._meter = this.add.container(W / 2 + 100, H / 2).setDepth(100).setVisible(false);
-    
-    // Background
-    const bg = this.add.rectangle(0, 0, 30, 200, 0x000000, 0.7).setStrokeStyle(2, 0xffffff);
-    
-    // Dynamic Sweet Spot (Will move based on distance)
-    this._gz = this.add.rectangle(0, 0, 26, 30, 0x00ff00, 0.5); 
-    
-    // Filling bar
-    this._fill = this.add.rectangle(0, 100, 26, 0, 0x00ffff).setOrigin(0.5, 1);
-    
-    this._meter.add([bg, this._gz, this._fill]);
-
-    // Dotted Trajectory Line
-    this._trajectory = this.add.graphics().setDepth(5).setVisible(false);
-  }
-
-  _setupInput() {
-    this._keys = this.input.keyboard.addKeys({
-      left: 'LEFT', right: 'RIGHT', up: 'UP', down: 'DOWN',
-      d: 'D', s: 'S', space: 'SPACE', esc: 'ESC'
-    });
-
-    // Sequence tracking for all relevant keys
-    ['LEFT', 'RIGHT', 'UP', 'DOWN'].forEach(k => {
-      this._keys[k.toLowerCase()].on('down', () => this._onKeyDown(k));
-    });
-
-    this._keys.space.on('down', () => this._onSpaceDown());
-    this._keys.space.on('up',   () => this._onSpaceUp());
-    this._keys.d.on('down',     () => this._onCrossover());
-    this._keys.s.on('down',     () => this._onSpin());
-    this._keys.esc.on('down',   () => this._exit());
-  }
-
-  _onKeyDown(k) {
-    this._inputBuffer.push(k);
-    if (this._inputBuffer.length > 8) this._inputBuffer.shift();
-    this._bufferTime = 0.6; // Slightly longer window for combos
-  }
-
-  // ── Game Logic ──────────────────────────────────────────────────────────────
-
-  _showMenu() {
-    this.state = 'menu';
-    const opp = BB_OPPONENTS[_BB.round % BB_OPPONENTS.length];
-    const bg = this.add.rectangle(this.W/2, this.H/2, this.W, this.H, 0x000000, 0.95).setDepth(200);
-    
-    const title = this.add.text(this.W/2, 80, `ROUND ${_BB.round + 1}\nVS ${opp.name}`, {
-      fontFamily: 'Courier New', fontSize: '28px', color: '#ffffff', align: 'center', fontStyle: 'bold'
-    }).setOrigin(0.5).setDepth(201);
-
-    const diff = this.add.text(this.W/2, 140, `${opp.difficulty} Difficulty`, {
-      fontFamily: 'Courier New', fontSize: '18px', color: '#ff5555'
-    }).setOrigin(0.5).setDepth(201);
-
-    const controls = this.add.text(this.W/2, 280, 
-      'COMBO MOVES (PRESS IN ORDER):\n\n' +
-      'CROSSOVER LEFT : ↓, ←, D\n' +
-      'CROSSOVER RIGHT: ↓, →, D\n' +
-      'SPIN LEFT     : →, ←, S\n' +
-      'SPIN RIGHT    : ←, →, S\n\n' +
-      'SHOOTING (SPACE):\n' +
-      '1. Tap to Start Aim Swing\n' +
-      '2. Tap to Lock Aim & Start Power\n' +
-      '3. Hold then Release at Sweet Spot', {
-      fontFamily: 'Courier New', fontSize: '18px', color: '#00ffcc', align: 'center', lineSpacing: 10
-    }).setOrigin(0.5).setDepth(201);
-
-    const start = this.add.text(this.W/2, 460, 'PRESS SPACE TO START', {
-      fontFamily: 'Courier New', fontSize: '22px', color: '#ffff00', fontStyle: 'bold'
-    }).setOrigin(0.5).setDepth(201);
-
-    this.input.keyboard.once('keydown-SPACE', () => {
-      bg.destroy(); title.destroy(); diff.destroy(); controls.destroy(); start.destroy();
-      this._startRound();
-    });
-  }
-
-  _startRound() {
-    this.score = 0;
-    this.misses = 0;
-    this._startPossession();
-  }
-
-  _startPossession() {
-    this.state = 'offense';
-    this.openness = 0.3;
-    this.shotClock = 10.0;
-    this._playerX = this.W / 2;
-    this._playerDepth = 0.1;
-    this._pastDefender = false;
-    this._shotState = 'none';
-    this._chargeVal = 0;
-    this._powerLevel = 0;
-    if (this._pwrMarker) this._pwrMarker.setVisible(false);
-    if (this._meter) this._meter.setVisible(false);
-    if (this._trajectory) this._trajectory.setVisible(false);
-    this._stealWarnActive = false;
-    this._stealDodgeActive = false;
-    this._oPos.y = 340;
-    this._oPos.x = 0;
-    this._resetStealTimer();
-    
-    this._hudText.setVisible(true);
-    this._missText.setVisible(true);
-    this._openText.setVisible(true);
-    this._clockText.setVisible(true);
-
-    this._updateHUD();
-  }
-
-  _resetStealTimer() {
-    const opp = BB_OPPONENTS[_BB.round % BB_OPPONENTS.length];
-    this._nextStealTimer = (1.5 + Math.random() * 2) / (opp.stealFreq + 0.5);
-  }
-
-  update(time, delta) {
-    if (this.state === 'menu' || this.state === 'match_end') return;
-
-    const dt = delta / 1000;
-    
-    if (this._bufferTime > 0) {
-      this._bufferTime -= dt;
-      if (this._bufferTime <= 0) this._inputBuffer = [];
+    constructor() {
+        super({ key: 'BasketballScene' });
     }
 
-    this._updatePhysics(dt);
-    this._updateVisuals(dt);
-    this._updateHUD();
-  }
+    create() {
+        const W = this.W = this.scale.width;
+        const H = this.H = this.scale.height;
 
-  _updatePhysics(dt) {
-    if (this.state === 'offense') {
-      const opp = BB_OPPONENTS[_BB.round % BB_OPPONENTS.length];
+        this.COURT_Y      = 480;
+        this.COURT_TOP    = 350;
+        this.COURT_LEFT   = 60;          // half-court line
+        this.COURT_RIGHT  = W - 60;      // baseline (before backboard)
+        this.HOOP_X       = W - 100;
+        this.HOOP_Y       = 220;
+        this.RIM_X        = this.HOOP_X - 25;
+        this.RIM_Y        = this.HOOP_Y + 10;
 
-      // Shot Clock
-      this.shotClock -= dt;
-      if (this.shotClock <= 0) {
-        this.shotClock = 0;
-        this._onShotClockViolation();
-        return;
-      }
+        // Scene-level flow state: 'controls', 'playing', 'dunking', 'goal', 'transition'
+        this.state        = 'controls';
+        this.hasBall      = 'player';
+        this.playerScore  = 0;
+        this.opponentScore = 0;
+        this.turbo        = BB_TURBO_MAX;
 
-      // Player Movement
-      if (!this._charging && this._crossoverTimer <= 0 && !this._spinActive && this._shotState === 'none') {
-        let prevX = this._playerX;
-        let prevDepth = this._playerDepth;
+        this._setupVisuals();
+        this._setupEntities();
+        this._setupInput();
+        this._setupPhysics();
+        this._showControls();
+    }
 
-        if (this._keys.left.isDown)  this._playerX = Math.max(100, this._playerX - 350 * dt);
-        if (this._keys.right.isDown) this._playerX = Math.min(700, this._playerX + 350 * dt);
-        if (this._keys.up.isDown)    this._playerDepth = Math.min(1, this._playerDepth + 0.4 * dt);
-        if (this._keys.down.isDown)  this._playerDepth = Math.max(0, this._playerDepth - 0.5 * dt);
+    _setupVisuals() {
+        const g = this.add.graphics();
 
-        // Blocking Logic
-        const defenderX = this.W / 2 + this._oPos.x;
-        const defenderY = this._oPos.y;
-        const playerY = this.PLY - this._playerDepth * 150;
-        const distToDefenderX = Math.abs(this._playerX - defenderX);
+        // Sky / wall
+        g.fillStyle(0x1a1a2e);
+        g.fillRect(0, 0, this.W, this.COURT_Y);
 
-        if (!this._pastDefender) {
-           if (playerY < defenderY - 30) {
-             this._pastDefender = true;
-             this._stealWarnActive = false;
-             this._stealDodgeActive = false;
-             this._showMsg('PAST DEFENDER!', '#00ffcc');
-           } else if (!this._spinActive && this._crossoverTimer <= 0) {
-             if (Math.abs(playerY - defenderY) < 40) {
-               if (distToDefenderX < 65) {
-                  if (this._playerDepth > prevDepth) {
-                    this._playerDepth = prevDepth;
-                    this._triggerBlock();
-                  }
-               }
-             }
-           }
+        // Floor
+        g.fillStyle(0x332211);
+        g.fillRect(0, this.COURT_Y, this.W, this.H - this.COURT_Y);
+
+        // Paint zone (semi-transparent highlight near hoop)
+        g.fillStyle(0xffa500, 0.12);
+        g.fillRect(BB_PAINT_X, this.COURT_TOP, this.COURT_RIGHT - BB_PAINT_X, this.COURT_Y - this.COURT_TOP);
+
+        // Court boundary lines — full rectangle
+        const CL = this.COURT_LEFT, CR = this.COURT_RIGHT;
+        const CT = this.COURT_TOP,  CY = this.COURT_Y;
+        g.lineStyle(3, 0xffffff, 0.5);
+        g.lineBetween(CL, CY, CR, CY);          // near sideline (bottom)
+        g.lineBetween(CL, CT, CR, CT);          // far sideline  (top)
+        g.lineBetween(CL, CT, CL, CY);          // half-court line (left)
+        g.lineBetween(CR, CT, CR, CY);          // baseline       (right)
+
+        // Half-court circle stub
+        g.lineStyle(2, 0xffffff, 0.3);
+        g.beginPath();
+        g.arc(CL, (CY + CT) / 2, 40, -Math.PI / 2, Math.PI / 2);
+        g.strokePath();
+
+        // Three-point arc
+        g.lineStyle(3, 0xffffff, 0.4);
+        g.beginPath();
+        g.arc(this.HOOP_X, (CY + CT) / 2, 200, Math.PI / 2, 3 * Math.PI / 2);
+        g.strokePath();
+
+        this._drawHoop();
+
+        // Score
+        this.scoreText = this.add.text(this.W / 2, 50, 'PLAYER 0 - 0 CPU', {
+            fontFamily: 'monospace', fontSize: '32px', color: '#ffffff', fontStyle: 'bold'
+        }).setOrigin(0.5).setStroke('#000000', 6);
+
+        // Turbo bar
+        this.add.rectangle(this.W / 2, 90, 200, 14, 0x333333).setOrigin(0.5);
+        this.turboBar = this.add.rectangle(this.W / 2 - 99, 90, 198, 10, 0x00aacc).setOrigin(0, 0.5);
+        this.add.text(this.W / 2 - 107, 90, 'TURBO', {
+            fontFamily: 'monospace', fontSize: '10px', color: '#00ccff'
+        }).setOrigin(1, 0.5);
+
+        // Big message (SWISH, BOOMSHAKALAKA, etc.)
+        this.msgText = this.add.text(this.W / 2, this.H / 2, '', {
+            fontFamily: 'monospace', fontSize: '64px', color: '#ffff00', fontStyle: 'bold'
+        }).setOrigin(0.5).setStroke('#000000', 8).setVisible(false);
+
+        // Shot accuracy feedback
+        this.accText = this.add.text(this.W / 2, this.H / 2 - 80, '', {
+            fontFamily: 'monospace', fontSize: '28px', color: '#ffffff', fontStyle: 'bold'
+        }).setOrigin(0.5).setStroke('#000000', 4).setVisible(false);
+    }
+
+    _drawHoop() {
+        const g = this.add.graphics().setDepth(10);
+        const x = this.HOOP_X, y = this.HOOP_Y;
+
+        // Backboard
+        g.fillStyle(0xffffff);
+        g.fillRect(x, y - 60, 10, 80);
+        g.lineStyle(2, 0x888888);
+        g.strokeRect(x, y - 60, 10, 80);
+
+        // Rim
+        g.lineStyle(4, 0xff5500);
+        g.lineBetween(x - 40, y + 10, x, y + 10);
+
+        // Net
+        g.lineStyle(1, 0xffffff, 0.6);
+        for (let i = 0; i < 5; i++) {
+            g.lineBetween(x - 35 + i * 8, y + 10, x - 35 + i * 8 + (i - 2) * 2, y + 40);
         }
-      } else if (this._crossoverTimer > 0) {
-        // Crossover move: Exactly 64px (1 character width at scale 2)
-        // over 0.1s = 640 speed
-        const speed = 640; 
-        this._playerX = Phaser.Math.Clamp(this._playerX + this._crossoverDir * speed * dt, 100, 700);
-      } else if (this._spinActive && this._spinTimer > 0) {
-        // Spin moves player quickly side to side
-        // To match crossover distance (64px) over 0.6s: speed = 107
-        const speed = 107;
-        this._playerX = Phaser.Math.Clamp(this._playerX + (this._spinDir || 0) * speed * dt, 100, 700);
-      }
+    }
 
-      // Timers (Moved after movement for better snappy feel)
-      if (this._crossoverTimer > 0) {
-        this._crossoverTimer -= dt;
-        if (this._crossoverTimer <= 0) {
-          this._crossoverTimer = 0;
-          this._crossoverDir = 0;
+    _setupEntities() {
+        const cd = window.characterData || {};
+        const s  = 1.5; // ~72px tall on a 560px screen ≈ 13% — "small agile athlete"
+
+        // Player — per-entity state: idle | dribbling | shooting | stunned
+        this.player = this.add.container(200, this.COURT_Y);
+        this.playerSprite = this.add.sprite(0, 0,
+            cd.gender === 'female' ? 'player_body_female' : 'player_body_male', 0).setScale(s);
+        this.playerShirt = this.add.sprite(0, 0, 'player_shirt', 0).setScale(s)
+            .setTint(this._parseColor(cd.colors?.shirt));
+        this.playerPants = this.add.sprite(0, 0, 'player_pants', 0).setScale(s)
+            .setTint(this._parseColor(cd.colors?.pants));
+        this.player.add([this.playerSprite, this.playerShirt, this.playerPants]);
+        this.player.floorY      = this.COURT_Y;
+        this.player.jumpV       = 0;
+        this.player.isJumping   = false;
+        this.player.entityState = 'dribbling'; // starts with ball
+        this.player.stunTimer   = 0;
+
+        // Opponent
+        const opp = BB_OPPONENTS[_BB.round % BB_OPPONENTS.length];
+        this.opponent = this.add.container(600, this.COURT_Y);
+        this.oppSprite = this.add.sprite(0, 0, 'player_body_male', 0).setScale(s).setTint(0xcc9988);
+        this.oppShirt  = this.add.sprite(0, 0, 'player_shirt',     0).setScale(s).setTint(0xff4444);
+        this.oppPants  = this.add.sprite(0, 0, 'player_pants',     0).setScale(s).setTint(0x222222);
+        this.opponent.add([this.oppSprite, this.oppShirt, this.oppPants]);
+        this.opponent.floorY      = this.COURT_Y;
+        this.opponent.jumpV       = 0;
+        this.opponent.isJumping   = false;
+        this.opponent.speed       = opp.speed;
+        this.opponent.entityState = 'idle';
+        this.opponent.stunTimer   = 0;
+
+        // Ball
+        this.ball = this.add.circle(0, 0, 10, 0xe86010).setStrokeStyle(2, 0x000000);
+        this.ball.vx      = 0;
+        this.ball.vy      = 0;
+        this.ball.isInAir = false;
+    }
+
+    _parseColor(hex) {
+        return parseInt((hex || '#ffffff').replace('#', ''), 16);
+    }
+
+    _setupInput() {
+        this.keys = this.input.keyboard.addKeys({
+            up: 'UP', down: 'DOWN', left: 'LEFT', right: 'RIGHT',
+            space: 'SPACE', d: 'D', esc: 'ESC', turbo: 'SHIFT'
+        });
+
+        this.keys.esc.on('down', () => this._exit());
+
+        this.keys.space.on('down', () => {
+            if (this.state !== 'playing') return;
+            if (this.player.entityState === 'stunned') return;
+            this._handleJump('player');
+        });
+
+        this.keys.space.on('up', () => {
+            if (this.state !== 'playing') return;
+            if (this.hasBall === 'player' && this.player.isJumping) {
+                this._shoot('player');
+            }
+        });
+
+        this.keys.d.on('down', () => {
+            if (this.state !== 'playing') return;
+            if (this.player.entityState === 'stunned') return;
+            this._shove('player');
+        });
+    }
+
+    _setupPhysics() {
+        this.GRAVITY        = 0.3;   // Player jump gravity — lower for "hang time"
+        this.APEX_GRAVITY   = 0.08;  // Very floaty at jump apex
+        this.APEX_THRESHOLD = 1.5;   // |jumpV| < this => at apex (narrower = shorter hang time)
+        this.BALL_GRAVITY   = 0.6;   // Separate ball gravity — keeps shot trajectories correct
+        this.JUMP_POWER     = -8;    // Smaller = lower jump (apex ~120px above floor, below rim)
+        this.MOVE_SPEED     = 300;
+    }
+
+    _showControls() {
+        const cx = this.W / 2, cy = this.H / 2;
+
+        const overlay = this.add.rectangle(cx, cy, this.W, this.H, 0x000000, 0.72).setDepth(200);
+        const panel   = this.add.rectangle(cx, cy, 460, 310, 0x0a0a2a, 1)
+            .setStrokeStyle(2, 0x3355ff).setDepth(201);
+
+        const rows = [
+            { text: 'CONTROLS',                          color: '#ffff00', size: 26, bold: true  },
+            { text: '',                                  color: '',        size: 6              },
+            { text: '\u2190 \u2192 \u2191 \u2193   Move',               color: '#ffffff', size: 18 },
+            { text: 'SHIFT       Turbo  (1.5\u00d7 speed & jump)',     color: '#00ccff', size: 18 },
+            { text: 'SPACE       Jump / release at apex to shoot',     color: '#ffffff', size: 18 },
+            { text: 'D           Shove  (stun + knock ball loose)',    color: '#ffffff', size: 18 },
+            { text: 'ESC         Exit gym',                            color: '#aaaaaa', size: 16 },
+            { text: '',                                  color: '',        size: 6              },
+            { text: 'Turbo + \u2192 inside orange zone = DUNK',        color: '#ff8800', size: 16 },
+            { text: '',                                  color: '',        size: 8              },
+            { text: 'PRESS ANY KEY TO START',            color: '#ffff00', size: 20, bold: true  },
+        ];
+
+        const textObjs = [];
+        let y = cy - 138;
+        for (const row of rows) {
+            if (!row.text) { y += row.size; continue; }
+            textObjs.push(
+                this.add.text(cx, y, row.text, {
+                    fontFamily: 'monospace',
+                    fontSize:   `${row.size}px`,
+                    color:      row.color,
+                    fontStyle:  row.bold ? 'bold' : 'normal'
+                }).setOrigin(0.5, 0).setDepth(202)
+            );
+            y += row.size + 4;
         }
-      }
-      if (this._spinTimer > 0) {
-        this._spinTimer -= dt;
-        if (this._spinTimer <= 0) {
-          this._spinTimer = 0;
-          this._spinActive = false;
-          this._spinDir = 0;
-        }
-      }
 
-      // Defender Logic
-      if (!this._pastDefender && !this._defenderFrozen) {
-        // Mirror player (fast!)
-        const targetX = this._playerX - this.W / 2;
-        const dx = targetX - this._oPos.x;
-        this._oPos.x += Math.sign(dx) * Math.min(Math.abs(dx), opp.speed * dt);
-
-        // Defender Y tracking: try to stay close to player's depth
-        const playerY = this.PLY - this._playerDepth * 150;
-        let targetY = Phaser.Math.Clamp(playerY + 40, 280, 420);
-        
-        // Even closer during steal
-        if (this._stealWarnActive || this._stealDodgeActive) targetY = playerY + 15;
-        
-        const dy = targetY - this._oPos.y;
-        this._oPos.y += Math.sign(dy) * Math.min(Math.abs(dy), 180 * dt);
-
-        // Openness Calculation based on distance
-        const defenderX = this.W / 2 + this._oPos.x;
-        const dX = (this._playerX - defenderX);
-        const dY = (playerY - this._oPos.y);
-        const dist = Math.sqrt(dX*dX + dY*dY);
-        // Distance of 200+ is 100% open, distance of 40 is 10% open
-        this.openness = Phaser.Math.Clamp((dist - 40) / 160, 0.1, 1.0);
-
-        // Steal Timer
-        if (!this._stealWarnActive && !this._stealDodgeActive && !this._blockActive) {
-          this._nextStealTimer -= dt;
-          if (this._nextStealTimer <= 0) this._triggerSteal();
-        }
-      } else if (this._pastDefender) {
-        // Stay past for the rest of this possession
-        // Defender stays exactly where they were when beaten
-        this.openness = 1.0;
-      }
-
-      // Action States
-      if (this._stealWarnActive) {
-        this._stealWarnTimer -= dt;
-        if (this._stealWarnTimer <= 0) {
-          this._stealWarnActive = false;
-          this._stealDodgeActive = true;
-          this._stealDodgeTimer = opp.reactionMs / 1000;
-        }
-      } else if (this._stealDodgeActive) {
-        this._stealDodgeTimer -= dt;
-        if (this._stealDodgeTimer <= 0) {
-          this._stealDodgeActive = false;
-          this._onStolen();
-        }
-      } else if (this._blockActive) {
-        this._blockTimer -= dt;
-        if (this._blockTimer <= 0) {
-          this._blockActive = false;
-          this._stealWarn.setVisible(false);
-        }
-      }
-
-      // Shot Meter Logic
-      if (this._shotState === 'aim_swing') {
-        const speed = 1.2 + (_BB.round * 0.2);
-        this._aimVal += this._aimDir * speed * dt;
-        if (this._aimVal > 1) { this._aimVal = 1; this._aimDir = -1; }
-        if (this._aimVal < 0) { this._aimVal = 0; this._aimDir = 1; }
-      } else if (this._shotState === 'pwr_charge') {
-        // Ping-pong fill while holding
-        this._pwrVal += this._pwrDir * 1.5 * dt;
-        if (this._pwrVal > 1) { this._pwrVal = 1; this._pwrDir = -1; }
-        if (this._pwrVal < 0) { this._pwrVal = 0; this._pwrDir = 1; }
-        // With origin (0.5, 1) and y=100, height grows UP
-        this._fill.setSize(26, this._pwrVal * 200);
-      }
-    } else if (this.state === 'shot_arc') {
-      this._updateBallArc(dt);
-    }
-  }
-
-  _triggerSteal() {
-    this._stealWarnActive = true;
-    this._stealWarnTimer = 0.5;
-    this._stealWarn.setText('STEAL ATTEMPT!').setVisible(true);
-    this.tweens.add({
-      targets: this._stealWarn, alpha: { from: 1, to: 0 }, duration: 100, yoyo: true, repeat: 3
-    });
-  }
-
-  _triggerBlock(msg = 'BLOCKED!') {
-    if (this._blockActive) return;
-    this._blockActive = true;
-    this._blockTimer = 1.0;
-    this._stealWarn.setText(msg).setVisible(true);
-    this.tweens.add({
-      targets: this._stealWarn, alpha: { from: 1, to: 0 }, duration: 100, yoyo: true, repeat: 3
-    });
-    // Push back to start and reset states
-    this._playerX = this.W / 2;
-    this._playerDepth = 0.1;
-    this._spinActive = false;
-    this._spinTimer = 0;
-    this._spinDir = 0;
-    this._crossoverTimer = 0;
-    this._crossoverDir = 0;
-    this.cameras.main.shake(250, 0.015);
-  }
-
-  _onStolen() {
-    this._stealWarn.setVisible(false);
-    this._showMsg('STOLEN!', '#ff0000');
-    this.cameras.main.shake(200, 0.02);
-    this.misses++;
-    this.state = 'result';
-
-    if (this.misses >= BB_MAX_MISSES) {
-      this.time.delayedCall(1000, () => this._lose());
-    } else {
-      this.time.delayedCall(1000, () => this._startPossession());
-    }
-  }
-
-  _onShotClockViolation() {
-    this._showMsg('SHOT CLOCK!', '#ff0000');
-    this.cameras.main.shake(200, 0.02);
-    this.misses++;
-    this.state = 'result';
-
-    if (this.misses >= BB_MAX_MISSES) {
-      this.time.delayedCall(1000, () => this._lose());
-    } else {
-      this.time.delayedCall(1000, () => this._startPossession());
-    }
-  }
-
-  _onCrossover() {
-    if (this.state !== 'offense' || this._crossoverTimer > 0 || this._spinActive || this._pastDefender) return;
-
-    // SF Combo check (Sequential)
-    const buf = this._inputBuffer;
-    const len = buf.length;
-    let dir = 0;
-
-    // Check last 2 entries: DOWN -> LEFT or DOWN -> RIGHT
-    if (len >= 2) {
-      const prev = buf[len-1];
-      const pprev = buf[len-2];
-      if (pprev === 'DOWN' && prev === 'LEFT') dir = -1;
-      if (pprev === 'DOWN' && prev === 'RIGHT') dir = 1;
+        const dismiss = () => {
+            overlay.destroy();
+            panel.destroy();
+            textObjs.forEach(t => t.destroy());
+            this._showIntro();
+        };
+        this.input.keyboard.once('keydown', dismiss);
     }
 
-    if (dir === 0) return;
-
-    this._inputBuffer = []; // Clear on success
-    this._crossoverDir = dir;
-    this._crossoverTimer = 0.1; // Snappy move
-
-    const opp = BB_OPPONENTS[_BB.round % BB_OPPONENTS.length];
-    let failChance = 0.35; // Easy (Round 1)
-    if (opp.difficulty === 'Normal') failChance = 0.55; // Normal (Round 2)
-    if (opp.difficulty === 'Hard')   failChance = 0.80; // Hard (Round 3)
-
-    if (this._stealDodgeActive || this._stealWarnActive || Math.random() > failChance) {
-      this._beatDefender('CROSSOVER!', 0.3);
-    } else {
-      this._triggerBlock('CROSSOVER BLOCKED');
-    }
+    _showIntro() {
+        const opp = BB_OPPONENTS[_BB.round % BB_OPPONENTS.length];
+        this._showMsg('VS ' + opp.name, '#ffffff', 2000);
+        this.time.delayedCall(2000, () => {
+            this._showMsg('START!', '#ffff00', 1000);
+            this.time.delayedCall(600, () => { this.state = 'playing'; });
+        });
     }
 
-  _onSpin() {
-    if (this.state !== 'offense' || this._spinActive || this._crossoverTimer > 0 || this._pastDefender) return;
+    update(time, delta) {
+        const dt = delta / 1000;
+        if (this.state === 'transition' || this.state === 'controls') return;
 
-    // SF Combo check (Sequential)
-    const buf = this._inputBuffer;
-    const len = buf.length;
-    let dir = 0;
-
-    // Check last 2 entries: LEFT -> RIGHT or RIGHT -> LEFT
-    if (len >= 2) {
-      const prev = buf[len-1];
-      const pprev = buf[len-2];
-      if (pprev === 'LEFT' && prev === 'RIGHT') dir = 1;
-      if (pprev === 'RIGHT' && prev === 'LEFT') dir = -1;
+        this._updateTurbo(dt);
+        this._updateStun(dt);
+        this._handlePlayerMovement(dt, time);
+        this._handleOpponentAI(dt, time);
+        this._updateJumpPhysics(this.player, dt);
+        this._updateJumpPhysics(this.opponent, dt);
+        this._updateBallPhysics(dt);
+        this._checkCollisions();
+        this._updateZOrdering();
     }
 
-    if (dir === 0) return;
-
-    this._inputBuffer = []; // Clear on success
-    this._spinActive = true;
-    this._spinTimer = 0.6;
-    this._spinDir = dir;
-    this._defenderFrozen = true;
-
-    const opp = BB_OPPONENTS[_BB.round % BB_OPPONENTS.length];
-    let failChance = 0.30; // Easy (Round 1)
-    if (opp.difficulty === 'Normal') failChance = 0.50; // Normal (Round 2)
-    if (opp.difficulty === 'Hard')   failChance = 0.75; // Hard (Round 3)
-
-    // Spin can dodge steals too
-    if (this._stealDodgeActive || this._stealWarnActive) {
-      failChance = 0; // Guaranteed escape if timed during steal attempt
-    }
-
-    if (Math.random() < failChance) {
-       this.time.delayedCall(400, () => {
-         this._defenderFrozen = false;
-         this._triggerBlock('SPIN BLOCKED');
-       });
-       return;
-    }
-
-    this.time.delayedCall(400, () => {
-      this._defenderFrozen = false;
-      this._beatDefender('SPIN MOVE!', 0.25);
-      this.tweens.add({
-        targets: this,
-        _playerDepth: Math.min(1.0, this._playerDepth + 0.35),
-        duration: 300,
-        ease: 'Quad.easeOut'
-      });
-    });
-  }
-
-  _beatDefender(msg, bonus) {
-    this._stealDodgeActive = false;
-    this._stealWarn.setVisible(false);
-    this._pastDefender = true;
-    this.openness = 1.0;
-    this._showMsg(msg, '#00ffcc');
-    
-    // Stumble animation for defender - NO YOYO (stay in the stumble position)
-    this.tweens.add({ 
-      targets: this._oPos, 
-      x: this._oPos.x + (Math.random() < 0.5 ? -80 : 80), 
-      y: this._oPos.y + 40,
-      duration: 300, 
-      ease: 'Quad.easeOut' 
-    });
-  }
-
-  _onSpaceDown() {
-    if (this.state !== 'offense' || this._stealDodgeActive || this._stealWarnActive) return;
-
-    if (this._shotState === 'none') {
-      // Step 1: Trigger - Plant feet and start aim swing
-      this._shotState = 'aim_swing';
-      this._aimVal = 0.5;
-      this._aimDir = 1;
-      this._trajectory.setVisible(true).setAlpha(1);
-    } else if (this._shotState === 'aim_swing') {
-      // Step 2: Aim - Stop aim swing and start power charge
-      this._shotState = 'pwr_charge';
-      this._pwrVal = 0;
-      this._pwrDir = 1;
-      this._meter.setVisible(true);
-    }
-  }
-
-  _onSpaceUp() {
-    if (this.state === 'offense' && this._shotState === 'pwr_charge') {
-      // Step 3: Power - Release to launch ball
-      this._shoot();
-      this._shotState = 'none';
-      this._meter.setVisible(false);
-      this._trajectory.setVisible(false);
-    }
-  }
-
-  _shoot() {
-    const pwr = this._pwrVal;
-    const aim = this._aimVal;
-    
-    // 1. Power Accuracy (Distance-based sweet spot)
-    const sweetSpot = 0.9 - (this._playerDepth * 0.6);
-    const pwrDist = Math.abs(pwr - sweetSpot);
-    
-    // Half-range of the green zone in 0..1 scale
-    const pwrRange = (this._gz.height / 200) / 2;
-    
-    let pwrAcc = 0;
-    if (pwrDist < pwrRange) {
-      pwrAcc = 1.0;
-    } else if (pwr < sweetSpot - 0.25) {
-      this._showMsg('AIRBALL! (Short)', '#ff5555');
-      pwrAcc = 0.0;
-    } else if (pwr > sweetSpot + 0.25) {
-      this._showMsg('CLANK! (Too Hard)', '#ff5555');
-      pwrAcc = 0.0;
-    } else {
-      pwrAcc = Math.max(0, 1.0 - (pwrDist / 0.3));
-    }
-
-    // 2. Aim Accuracy (Trajectory timing)
-    const aimDist = Math.abs(aim - 0.5);
-    let aimAcc = 0;
-    if (aimDist < 0.08) { 
-      aimAcc = 1.0;
-    } else {
-      aimAcc = Math.max(0, 1.0 - (aimDist / 0.4));
-    }
-
-    const accuracy = pwrAcc * aimAcc;
-    const made = Math.random() < (this.openness * accuracy + this._playerDepth * 0.2);
-    
-    this.state = 'shot_arc';
-    this._startBallArc(made);
-  }
-
-  _startBallArc(made) {
-    this._arcT = 0;
-    this._arcMade = made;
-    this._arcSx = this._playerDispX;
-    this._arcSy = this._pBody.y - 40;
-    this._arcEx = this.RX;
-    this._arcEy = this.RY;
-    this._arcCx = (this._arcSx + this._arcEx) / 2;
-    this._arcCy = Math.min(this._arcSy, this._arcEy) - 150;
-  }
-
-  _updateBallArc(dt) {
-    this._arcT += dt * 1.2;
-    const t = Math.min(1, this._arcT);
-    this._ballX = (1 - t) * (1 - t) * this._arcSx + 2 * (1 - t) * t * this._arcCx + t * t * this._arcEx;
-    this._ballY = (1 - t) * (1 - t) * this._arcSy + 2 * (1 - t) * t * this._arcCy + t * t * this._arcEy;
-
-    if (t >= 1) {
-      this._onShotResult(this._arcMade);
-    }
-  }
-
-  _onShotResult(made) {
-    this.state = 'result';
-    if (made) {
-      this.score++;
-      this._showMsg('GOAL!', '#00ff00');
-      this.cameras.main.shake(200, 0.015);
-      GameState.addMoney(5);
-    } else {
-      this.misses++;
-      this._showMsg('MISS!', '#ff0000');
-    }
-
-    if (this.score >= BB_GOAL) {
-      this.time.delayedCall(1500, () => this._win());
-    } else if (this.misses >= BB_MAX_MISSES) {
-      this.time.delayedCall(1500, () => this._lose());
-    } else {
-      this.time.delayedCall(1200, () => this._startPossession());
-    }
-  }
-
-  _win() {
-    this.state = 'match_end';
-    _BB.round++;
-    this._showEndScreen(true);
-  }
-
-  _lose() {
-    this.state = 'match_end';
-    this._showEndScreen(false);
-  }
-
-  _showEndScreen(won) {
-    const W = this.W, H = this.H;
-    
-    // Hide HUD
-    this._hudText.setVisible(false);
-    this._missText.setVisible(false);
-    this._openText.setVisible(false);
-    this._clockText.setVisible(false);
-
-    const bg = this.add.rectangle(W/2, H/2, W, H, 0x000000, 0.9).setDepth(200);
-    const title = won ? 'VICTORY!' : 'GAME OVER';
-    const col = won ? '#00ff00' : '#ff0000';
-    this.add.text(W/2, H/2 - 60, title, { fontFamily: 'Courier New', fontSize: '48px', color: col }).setOrigin(0.5).setDepth(201);
-    
-    const btn = this.add.rectangle(W/2, H/2 + 60, 200, 40, 0x333333).setInteractive({ useHandCursor: true }).setDepth(201);
-    this.add.text(W/2, H/2 + 60, won ? 'NEXT ROUND' : 'TRY AGAIN', { fontFamily: 'Courier New', fontSize: '20px', color: '#ffffff' }).setOrigin(0.5).setDepth(202);
-    
-    btn.on('pointerup', () => {
-      this.scene.restart();
-    });
-
-    const leave = this.add.text(W/2, H/2 + 110, 'ESC to Leave', { fontFamily: 'Courier New', fontSize: '14px', color: '#888888' }).setOrigin(0.5).setDepth(201);
-  }
-
-  // ── Rendering ───────────────────────────────────────────────────────────────
-
-  _getPerspectiveScale(y) {
-    // Map Y from VP.y to BY to a scale factor 0.4 to 1.0
-    const t = (y - this.VP.y) / (this.BY - this.VP.y);
-    return 0.4 + t * 0.6;
-  }
-
-  _updateVisuals(dt) {
-    this._dribblePhase = (this._dribblePhase + dt * 10) % (Math.PI * 2);
-
-    // Smooth player
-    const lerpX = this._crossoverTimer > 0 ? 0.35 : 0.15;
-    this._playerDispX += (this._playerX - this._playerDispX) * lerpX;
-    this._playerDispDepth += (this._playerDepth - this._playerDispDepth) * 0.15;
-
-    const py = this.PLY - this._playerDispDepth * 150;
-    const ps = BASE_CHARACTER_SCALE * this._getPerspectiveScale(py);
-
-    this._pLayers.forEach(l => {
-      l.setPosition(this._playerDispX, py);
-      l.setScale(ps);
-      // Animation frames
-      let f = 12; // default idle facing away (UP)
-      if (this._spinActive) {
-        // Spin visuals: scaling squeeze effect + direction cycling
-        const squeeze = 1.0 + Math.sin(this._spinTimer * 20) * 0.2;
-        l.setScale(ps * squeeze, ps);
-        
-        const spinFrames = [0, 4, 12, 8];
-        const idx = Math.floor(Date.now() / 100) % 4;
-        f = spinFrames[idx];
-        l.angle = 0;
-      } else {
-        l.angle = 0;
-        if (this._crossoverDir !== 0) {
-          f = (this._crossoverDir < 0 ? 4 : 8) + (Math.floor(Date.now() / 100) % 4);
-          // Better crossover animation: tilt and slight hop
-          l.angle = this._crossoverDir * 15;
-          l.y -= 10; 
+    _updateTurbo(dt) {
+        const active = this.keys.turbo.isDown && this.turbo > 0 && this.player.entityState !== 'stunned';
+        if (active) {
+            this.turbo = Math.max(0, this.turbo - BB_TURBO_DRAIN * dt);
         } else {
-          f = 12; // idle dribble facing basket
+            this.turbo = Math.min(BB_TURBO_MAX, this.turbo + BB_TURBO_REGEN * dt);
         }
-      }
-      l.setFrame(f);
-    });
-
-    // Opponent
-    const oy = this._oPos.y;
-    const ox = this.W / 2 + this._oPos.x;
-    const os = BASE_CHARACTER_SCALE * this._getPerspectiveScale(oy);
-
-    this._oLayers.forEach(l => {
-      l.setPosition(ox, oy);
-      l.setScale(os);
-
-      let f = Math.floor(Date.now() / 150) % 4; // idle/walk
-      if (this._blockActive) {
-        f = 12 + (Math.floor(Date.now() / 100) % 4); // hands up
-      } else if (this._stealWarnActive || this._stealDodgeActive) {
-        // Reaching motion
-        f = (this._oPos.x < 0 ? 4 : 8) + (Math.floor(Date.now() / 100) % 4);
-      }
-      l.setFrame(f);
-    });
-
-    // Ball
-    if (this.state === 'offense') {
-      this._ballX = this._playerDispX + 20;
-      this._ballY = py - 10 + Math.sin(this._dribblePhase) * 15;
-    }
-    this._ball.setPosition(this._ballX, this._ballY);
-    this._ball.setScale(this._getPerspectiveScale(this._ballY) * 0.8);
-
-    // Dynamic Shot Meter
-    // Scale aggressively by depth AND distance to defender
-    const playerY = this.PLY - this._playerDispDepth * 150;
-    const defenderX = this.W / 2 + this._oPos.x;
-    const dX = (this._playerDispX - defenderX);
-    const dY = (playerY - this._oPos.y);
-    const distToDefender = Math.sqrt(dX*dX + dY*dY);
-
-    const clockFactor = 0.2 + (this.shotClock / 10.0) * 0.8;
-    
-    let baseGw = 10;
-    if (this._pastDefender) {
-      baseGw = 80 + (this._playerDepth * 40);
-    } else {
-      const challengePenalty = Phaser.Math.Clamp((distToDefender - 40) / 160, 0.1, 1.0);
-      baseGw = (10 + (this._playerDepth * 30)) * challengePenalty;
+        this.turboBar.width = (this.turbo / BB_TURBO_MAX) * 198;
+        this.turboBar.setFillStyle(active ? 0x00ffff : (this.turbo < 20 ? 0x885500 : 0x00aacc));
     }
 
-    const gw = baseGw * clockFactor;
-    const finalSize = Phaser.Math.Clamp(gw / 2, 8, 60);
-    this._gz.height = finalSize;
-    
-    // Position sweet spot based on distance
-    const sweetSpot = 0.9 - (this._playerDepth * 0.6);
-    this._gz.y = 100 - (sweetSpot * 200);
-
-    // Draw Trajectory Line
-    this._trajectory.clear();
-    // Show during BOTH aim swing and power charge phases
-    if (this._shotState === 'aim_swing' || this._shotState === 'pwr_charge') {
-      const sx = this._playerDispX;
-      const sy = py - 40;
-      // Target moves based on aimVal
-      const targetX = this.RX + (this._aimVal - 0.5) * 400;
-      const targetY = this.RY;
-      
-      this._trajectory.lineStyle(2, 0xffffff, 0.6);
-      // Simple dotted line
-      const points = 10;
-      for (let i = 0; i <= points; i++) {
-        const t = i / points;
-        const px = sx + (targetX - sx) * t;
-        const py_ = sy + (targetY - sy) * t - Math.sin(t * Math.PI) * 100;
-        if (i % 2 === 0) {
-          const nextT = (i+0.5) / points;
-          const npx = sx + (targetX - sx) * nextT;
-          const npy = sy + (targetY - sy) * nextT - Math.sin(nextT * Math.PI) * 100;
-          this._trajectory.lineBetween(px, py_, npx, npy);
+    _updateStun(dt) {
+        for (const [ent, key] of [[this.player, 'player'], [this.opponent, 'opponent']]) {
+            if (ent.entityState === 'stunned') {
+                ent.stunTimer -= dt * 1000;
+                if (ent.stunTimer <= 0) {
+                    ent.entityState = this.hasBall === key ? 'dribbling' : 'idle';
+                }
+            }
         }
-      }
     }
-  }
 
-  _updateHUD() {
-    const opp = BB_OPPONENTS[_BB.round % BB_OPPONENTS.length];
-    this._hudText.setText(`SCORE: ${this.score} / ${BB_GOAL}\nROUND ${_BB.round + 1}: ${opp.name}`);
-    
-    let missesStr = '';
-    for(let i=0; i<BB_MAX_MISSES; i++) {
-      missesStr += (i < this.misses) ? '✘ ' : '○ ';
+    _handlePlayerMovement(dt, time) {
+        if (this.state !== 'playing') return;
+        if (this.player.entityState === 'stunned') return;
+
+        const turboActive = this.keys.turbo.isDown && this.turbo > 0;
+        const speed = this.MOVE_SPEED * (turboActive ? BB_TURBO_MULT : 1);
+
+        let dx = 0, dy = 0;
+        if (this.keys.left.isDown)  dx -= 1;
+        if (this.keys.right.isDown) dx += 1;
+        if (this.keys.up.isDown)    dy -= 0.6;
+        if (this.keys.down.isDown)  dy += 0.6;
+
+        if (dx !== 0 || dy !== 0) {
+            const mag = Math.sqrt(dx * dx + dy * dy);
+            const vx  = (dx / mag) * speed;
+            const vy  = (dy / mag) * speed;
+
+            this.player.x      += vx * dt;
+            this.player.floorY += vy * dt;
+
+            this.player.x      = Phaser.Math.Clamp(this.player.x,      this.COURT_LEFT, this.COURT_RIGHT);
+            this.player.floorY = Phaser.Math.Clamp(this.player.floorY, this.COURT_TOP,  this.COURT_Y);
+
+            const frame = vx > 0 ? 8 : (vx < 0 ? 4 : (vy > 0 ? 0 : 12));
+            this._setFrame(this.player, frame + (Math.floor(time / 150) % 4));
+
+            if (!this.player.isJumping) {
+                this.player.entityState = this.hasBall === 'player' ? 'dribbling' : 'idle';
+            }
+        } else {
+            this._setFrame(this.player, 0);
+            if (!this.player.isJumping && this.player.entityState !== 'stunned') {
+                this.player.entityState = this.hasBall === 'player' ? 'dribbling' : 'idle';
+            }
+        }
     }
-    this._missText.setText(`MISSES: ${missesStr}`);
 
-    const openPct = Math.round(this.openness * 100);
-    this._openText.setText(`OPEN: ${openPct}%`);
-    this._openText.setColor(openPct > 70 ? '#00ff00' : (openPct > 40 ? '#ffff00' : '#ff5555'));
+    _handleOpponentAI(dt, time) {
+        if (this.state !== 'playing') return;
+        if (this.opponent.entityState === 'stunned') return;
 
-    this._clockText.setText(`CLOCK: ${Math.ceil(this.shotClock)}`);
-    this._clockText.setColor(this.shotClock < 3 ? '#ff0000' : '#ffffff');
-  }
+        const targetX = this.hasBall === 'player' ? this.player.x
+                      : this.hasBall === 'none'   ? this.ball.x
+                      : this.HOOP_X - 150;
+        const targetY = this.hasBall === 'player' ? this.player.floorY
+                      : this.hasBall === 'none'   ? (this.ball.floorY || this.ball.y)
+                      : (this.COURT_Y + this.COURT_TOP) / 2;
 
-  _showMsg(text, color) {
-    this._msgText.setText(text).setColor(color).setVisible(true);
-    this.tweens.add({ targets: this._msgText, scale: { from: 0.5, to: 1.2 }, alpha: { from: 1, to: 0 }, duration: 1000, onComplete: () => this._msgText.setVisible(false) });
-  }
+        const dx   = targetX - this.opponent.x;
+        const dy   = targetY - this.opponent.floorY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
 
-  _exit() {
-    this.game.events.emit('basketballExit');
-    this.scene.stop();
-    this.scene.resume('GameScene');
-  }
+        if (dist > 20) {
+            const vx = (dx / dist) * this.opponent.speed;
+            const vy = (dy / dist) * this.opponent.speed * 0.6;
+            this.opponent.x      += vx * dt;
+            this.opponent.floorY += vy * dt;
+            this.opponent.x      = Phaser.Math.Clamp(this.opponent.x,      this.COURT_LEFT, this.COURT_RIGHT);
+            this.opponent.floorY = Phaser.Math.Clamp(this.opponent.floorY, this.COURT_TOP,  this.COURT_Y);
+            const frame = vx > 0 ? 8 : (vx < 0 ? 4 : (vy > 0 ? 0 : 12));
+            this._setFrame(this.opponent, frame + (Math.floor(time / 150) % 4));
+        } else {
+            this._setFrame(this.opponent, 0);
+            if (this.hasBall === 'player' && !this.opponent.isJumping) {
+                if (this.player.isJumping) {
+                    this._handleJump('opponent');
+                } else if (Math.random() < 0.05) {
+                    this._shove('opponent');
+                }
+            }
+        }
+
+        // CPU drives and shoots when it has the ball
+        if (this.hasBall === 'opponent' && !this.opponent.isJumping) {
+            if (this.opponent.x > this.HOOP_X - 300) {
+                this._handleJump('opponent');
+                this.time.delayedCall(300 + Math.random() * 500, () => {
+                    if (this.hasBall === 'opponent' && this.opponent.isJumping) this._shoot('opponent');
+                });
+            } else {
+                this.opponent.x = Phaser.Math.Clamp(
+                    this.opponent.x + this.opponent.speed * dt,
+                    this.COURT_LEFT, this.COURT_RIGHT
+                );
+            }
+        }
+    }
+
+    _setFrame(container, frame) {
+        container.iterate(child => {
+            if (child.setFrame) child.setFrame(frame);
+        });
+    }
+
+    _handleJump(who) {
+        const ent = who === 'player' ? this.player : this.opponent;
+        if (ent.isJumping) return;
+        if (ent.entityState === 'stunned') return;
+
+        const turboActive = who === 'player' && this.keys.turbo.isDown && this.turbo > 0;
+        ent.isJumping = true;
+        ent.jumpV     = this.JUMP_POWER * (turboActive ? BB_TURBO_MULT : 1);
+
+        // Turbo dunk: player moving toward hoop + turbo + in paint zone; CPU dunk when very close
+        if (this.hasBall === who) {
+            const movingTowardHoop = this.keys.right.isDown;
+            const playerDunk = who === 'player' && turboActive && ent.x > BB_PAINT_X && movingTowardHoop;
+            const cpuDunk    = who === 'opponent' && ent.x > this.HOOP_X - 150;
+            if (playerDunk || cpuDunk) {
+                this._dunk(who);
+            }
+        }
+    }
+
+    _updateJumpPhysics(ent, dt) {
+        if (!ent.isJumping) {
+            ent.y = ent.floorY;
+            return;
+        }
+
+        // Floaty apex: gravity is much weaker near the peak
+        const atApex = Math.abs(ent.jumpV) < this.APEX_THRESHOLD;
+        ent.jumpV += atApex ? this.APEX_GRAVITY : this.GRAVITY;
+        ent.y     += ent.jumpV;
+
+        if (ent.y >= ent.floorY) {
+            ent.y         = ent.floorY;
+            ent.isJumping = false;
+            ent.jumpV     = 0;
+        }
+    }
+
+    _updateBallPhysics(dt) {
+        if (this.hasBall === 'player') {
+            const bounce = Math.abs(Math.sin(Date.now() / 150)) * 20;
+            const frame  = this.playerSprite.frame.name;
+            const ox     = (frame >= 8 && frame < 12) ? 25 : ((frame >= 4 && frame < 8) ? -25 : 0);
+            this.ball.x      = this.player.x + ox;
+            this.ball.y      = this.player.y - 20 + bounce;
+            this.ball.floorY = this.player.floorY;
+        } else if (this.hasBall === 'opponent') {
+            const bounce = Math.abs(Math.sin(Date.now() / 150)) * 20;
+            const frame  = this.oppSprite.frame.name;
+            const ox     = (frame >= 8 && frame < 12) ? 25 : ((frame >= 4 && frame < 8) ? -25 : 0);
+            this.ball.x      = this.opponent.x + ox;
+            this.ball.y      = this.opponent.y - 20 + bounce;
+            this.ball.floorY = this.opponent.floorY;
+        } else if (this.ball.isInAir) {
+            this.ball.vy += this.BALL_GRAVITY;
+            this.ball.x  += this.ball.vx;   // per-frame, no dt
+            this.ball.y  += this.ball.vy;
+
+            // Ceiling bounce (keep ball on screen)
+            if (this.ball.y < 20) {
+                this.ball.y  = 20;
+                this.ball.vy = Math.abs(this.ball.vy) * 0.5;
+            }
+
+            // Backboard bounce (high restitution ~0.75)
+            if (this.ball.x >= this.HOOP_X - 2 &&
+                this.ball.y > this.HOOP_Y - 60 &&
+                this.ball.y < this.HOOP_Y + 20) {
+                this.ball.vx *= -0.75;
+                this.ball.x   = this.HOOP_X - 3;
+            }
+
+            // Left boundary — bounce ball back in
+            if (this.ball.x < this.COURT_LEFT) {
+                this.ball.x  = this.COURT_LEFT;
+                this.ball.vx = Math.abs(this.ball.vx) * 0.5;
+            }
+
+            // Right boundary (past baseline, not a backboard hit) — bounce ball back
+            if (this.ball.x > this.COURT_RIGHT && !(this.ball.y > this.HOOP_Y - 60 && this.ball.y < this.HOOP_Y + 20)) {
+                this.ball.x  = this.COURT_RIGHT;
+                this.ball.vx = -Math.abs(this.ball.vx) * 0.5;
+            }
+
+            // Rim collision
+            const rimDist = Phaser.Math.Distance.Between(this.ball.x, this.ball.y, this.RIM_X, this.RIM_Y);
+            if (this.ball.vy > 0 && rimDist < 22) {
+                // Good entry angle → score; otherwise bounce off rim
+                const centered = this.ball.x > this.RIM_X - 20 && this.ball.x < this.RIM_X + 5;
+                if (centered) {
+                    this._scoreGoal(this.ball.lastShooter);
+                    this.ball.isInAir = false;
+                } else {
+                    // High-restitution rim bounce
+                    this.ball.vy *= -0.65;
+                    this.ball.vx *= 0.5;
+                }
+            }
+
+            // Floor — settle into a loose ball
+            if (this.ball.y > this.COURT_Y) {
+                if (Math.abs(this.ball.vy) < 2) {
+                    this.ball.isInAir = false;
+                    this.ball.vx      = 0;
+                    this.ball.vy      = 0;
+                    this.ball.y       = this.COURT_Y;
+                    this.ball.floorY  = this.COURT_Y;
+                    // Clamp to court
+                    this.ball.x = Phaser.Math.Clamp(this.ball.x, this.COURT_LEFT, this.COURT_RIGHT);
+                } else {
+                    this.ball.y  = this.COURT_Y;
+                    this.ball.vy *= -0.6;
+                    this.ball.vx *= 0.8;
+                }
+            }
+        }
+    }
+
+    _shoot(who) {
+        const ent = who === 'player' ? this.player : this.opponent;
+        if (this.hasBall !== who) return;
+
+        // Accuracy: 1.0 = perfect apex release, 0.0 = very early/late
+        const accuracy = 1 - Math.min(1, Math.abs(ent.jumpV) / Math.abs(this.JUMP_POWER));
+
+        this.hasBall          = 'none';
+        this.ball.isInAir     = true;
+        this.ball.lastShooter = who;
+
+        const dx   = this.RIM_X - ent.x;
+        const dist = Math.abs(dx);
+
+        // Arc via fixed apex height: ball always peaks near y=APEX_Y (top of visible court),
+        // then falls to the rim. vx is derived so the ball covers `dist` in t_total frames.
+        //   rise: vy_up = sqrt(2*g*rise),  t_up  = vy_up / g
+        //   fall: rim is below apex by (RIM_Y - APEX_Y),  t_down = sqrt(2*(RIM_Y-APEX_Y)/g)
+        const APEX_Y  = 120;   // px from screen top — ball peaks here
+        const rise    = Math.max(20, ent.y - APEX_Y);   // how far ball rises from shooter
+        const vyUp    = Math.sqrt(2 * this.BALL_GRAVITY * rise);
+        const t_up    = vyUp / this.BALL_GRAVITY;
+        const t_down  = Math.sqrt(2 * Math.max(1, this.RIM_Y - APEX_Y) / this.BALL_GRAVITY);
+        const t_total = t_up + t_down;
+        const vxBase  = dist / t_total;
+
+        // Poor timing: nudge the arc up/down (miss long or short)
+        const noise = (1 - accuracy) * 5 * (Math.random() - 0.3);
+
+        this.ball.vx = (dx > 0 ? 1 : -1) * vxBase;
+        this.ball.vy = -(vyUp - noise);
+
+        if (who === 'player') this._showAccuracy(accuracy);
+        ent.entityState = 'shooting';
+    }
+
+    _showAccuracy(accuracy) {
+        let label, color;
+        if (accuracy > 0.8)       { label = 'PERFECT!'; color = '#ffff00'; }
+        else if (accuracy > 0.55) { label = 'GOOD';     color = '#00ff88'; }
+        else if (accuracy > 0.3)  { label = 'OK';       color = '#ffffff'; }
+        else                      { label = 'EARLY';    color = '#ff8800'; }
+
+        this.accText.setText(label).setColor(color).setVisible(true).setAlpha(1);
+        this.tweens.add({
+            targets: this.accText,
+            y: this.H / 2 - 130,
+            alpha: 0,
+            duration: 900,
+            ease: 'Cubic.easeOut',
+            onComplete: () => {
+                this.accText.setVisible(false);
+                this.accText.y = this.H / 2 - 80;
+            }
+        });
+    }
+
+    _dunk(who) {
+        const ent = who === 'player' ? this.player : this.opponent;
+        if (this.hasBall !== who) return;
+
+        this.state = 'dunking';
+        this.tweens.add({
+            targets: ent,
+            x: this.RIM_X - 10,
+            y: this.RIM_Y - 20,
+            duration: 250,
+            ease: 'Back.easeOut',
+            onComplete: () => this._scoreGoal(who, true)
+        });
+    }
+
+    _scoreGoal(who, isDunk = false) {
+        if (this.state === 'goal' || this.state === 'transition') return;
+        this.state = 'goal';
+
+        if (who === 'player') {
+            this.playerScore += 2;
+            if (typeof GameState !== 'undefined') GameState.addMoney(5);
+        } else {
+            this.opponentScore += 2;
+        }
+
+        this._updateHUD();
+        this._showMsg(isDunk ? 'BOOMSHAKALAKA!' : 'SWISH!', '#00ff00', 1500);
+        this.cameras.main.shake(300, 0.02);
+
+        this.time.delayedCall(1500, () => {
+            if (this.playerScore >= BB_GOAL * 2) {
+                this._win();
+            } else if (this.opponentScore >= BB_GOAL * 2) {
+                this._lose();
+            } else {
+                this._resetPossession(who === 'player' ? 'opponent' : 'player');
+            }
+        });
+    }
+
+    _win() {
+        this.state = 'transition';
+        _BB.round++;
+        this._showMsg('WINNER!', '#ffff00', 2000);
+        this.time.delayedCall(2000, () => this.scene.restart());
+    }
+
+    _lose() {
+        this.state = 'transition';
+        this._showMsg('GAME OVER', '#ff0000', 2000);
+        this.time.delayedCall(2000, () => this.scene.restart());
+    }
+
+    _resetPossession(whoGetsBall) {
+        this.state = 'playing';
+        this.hasBall = whoGetsBall;
+        this.player.x         = 200;
+        this.player.floorY    = this.COURT_Y;
+        this.opponent.x       = 600;
+        this.opponent.floorY  = this.COURT_Y;
+        this.ball.isInAir     = false;
+        this.player.isJumping = false;
+        this.opponent.isJumping = false;
+        this.player.entityState   = whoGetsBall === 'player'   ? 'dribbling' : 'idle';
+        this.opponent.entityState = whoGetsBall === 'opponent' ? 'dribbling' : 'idle';
+    }
+
+    _shove(who) {
+        const target    = who === 'player' ? this.opponent : this.player;
+        const targetKey = who === 'player' ? 'opponent' : 'player';
+
+        const dist = Phaser.Math.Distance.Between(
+            this.player.x, this.player.floorY,
+            this.opponent.x, this.opponent.floorY
+        );
+        if (dist > 80) return;
+
+        // Stun the target
+        target.entityState = 'stunned';
+        target.stunTimer   = BB_STUN_DURATION;
+
+        // Knock ball loose if target had possession
+        if (this.hasBall === targetKey) {
+            this.hasBall      = 'none';
+            this.ball.isInAir = true;
+            this.ball.vx      = (who === 'player' ? 1 : -1) * (2 + Math.random() * 2); // px/frame
+            this.ball.vy      = -4 - Math.random() * 3;
+        }
+
+        this._showMsg(who === 'player' ? 'SHOVE!' : 'SHOVED!', '#ff44ff', 500);
+        this.tweens.add({
+            targets: target,
+            x: target.x + (who === 'player' ? 50 : -50),
+            duration: 180,
+            yoyo: true,
+            ease: 'Power2'
+        });
+    }
+
+    _checkCollisions() {
+        if (this.hasBall === 'none' && !this.ball.isInAir) {
+            if (Phaser.Math.Distance.Between(this.player.x, this.player.floorY, this.ball.x, this.ball.y) < 50) {
+                this.hasBall = 'player';
+                this.player.entityState = 'dribbling';
+            } else if (Phaser.Math.Distance.Between(this.opponent.x, this.opponent.floorY, this.ball.x, this.ball.y) < 50) {
+                this.hasBall = 'opponent';
+                this.opponent.entityState = 'dribbling';
+            }
+        }
+    }
+
+    _updateZOrdering() {
+        this.player.setDepth(this.player.floorY);
+        this.opponent.setDepth(this.opponent.floorY);
+        if (this.hasBall === 'none') {
+            this.ball.setDepth(this.ball.floorY || this.ball.y);
+        }
+    }
+
+    _updateHUD() {
+        this.scoreText.setText(`PLAYER ${this.playerScore} - ${this.opponentScore} CPU`);
+    }
+
+    _showMsg(text, color, duration = 1000) {
+        this.msgText.setText(text).setColor(color).setVisible(true).setScale(0.5).setAlpha(1);
+        this.tweens.add({
+            targets: this.msgText,
+            scale: 1,
+            alpha: { from: 1, to: 0 },
+            duration: duration,
+            ease: 'Cubic.easeOut',
+            onComplete: () => this.msgText.setVisible(false)
+        });
+    }
+
+    _exit() {
+        this.game.events.emit('basketballExit');
+        this.scene.stop();
+        this.scene.resume('GameScene');
+    }
 }

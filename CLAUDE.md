@@ -100,26 +100,36 @@ All venues are entered via proximity + E key. On enter: `scene.pause('GameScene'
 | Home | HomeScene | `home_entrance` | (0,1) |
 | Gym | BasketballScene | `gym_entrance` | (2,0) |
 
-## BasketballScene — "Pro-Hoops Duel"
+## BasketballScene — "NBA Jam Style 1-on-1"
 
-1-on-1 behind-the-back basketball. Pseudo-3D court via vanishing-point perspective lines. `physics.world.gravity.y = 0` (no physics bodies used; all positions are manual).
+1-on-1 arcade basketball with side-view perspective. Half-court setting.
 
-**Game flow**: alternating possessions. First to `BB_WIN` (5) baskets wins the match. Win → opponent level increments (5 levels: Rookie → Legend). Level persists in module-level `_BB` across gym visits.
+**Controls**:
+- **ARROWS**: 8-way movement on the floor.
+- **SPACE**: Jump. Release at the apex to shoot (accuracy shown on screen). Turbo dunk when SHIFT is held in the paint zone.
+- **SHIFT**: Turbo — 1.5× speed and jump height while the turbo meter has charge.
+- **D**: Shove — stuns opponent and knocks the ball loose if they have it.
+- **ESC**: Exit the gym.
 
-**Offense** (player has ball):
-- `←/→` Crossover — if timed during the defender's steal dodge window → Blow-by (+openness)
-- `↓/S` Spin move — also beats steal attempts
-- `SPACE` hold then release — shot charge meter (sweet spot 0.60–0.90 of bar); shot success = openness × shot_quality
-- Defender makes steal attempts on a timer; triggers brief warn flash then a reaction window (`reactionMs` varies by level)
+**Mechanics**:
+- **Player scale**: ~10-15% of screen height (scale 1.5) — athletes look small on a large court.
+- **Hang time**: Gravity drops to near-zero at the jump apex for a floaty feel.
+- **Turbo meter**: Drains while SHIFT held, recharges when released. Displayed as a bar below the score.
+- **Apex accuracy**: Releasing SPACE closer to the jump peak gives PERFECT/GOOD/OK/EARLY feedback and tighter shot accuracy.
+- **Paint zone**: Semi-transparent orange rectangle near the hoop. Turbo + SPACE inside it triggers a dunk.
+- **Shove**: Replaces steal. Stuns the target for ~900 ms and pops the ball loose.
+- **Ball restitution**: Ball bounces off the backboard (~0.75) and rim (~0.65) before settling.
+- **Entity state machine**: Each entity has `entityState`: `idle | dribbling | shooting | stunned`.
+- **Z-Ordering**: Depth-based rendering using the floor Y position.
+- **CPU AI**: Drives to hoop, attempts shoves, jumps to block, dunks when close.
 
-**Defense** (AI has ball):
-- `SPACE/F` Steal — press during STEAL WINDOW flash (AI dribble switch)
-- `↑/W` Contest — press while CPU shot arc is in the air (reduces AI shot accuracy by ~48%)
-- AI shoots after a random timer; shot accuracy scales by opponent level
-
-**Opponent table** (`BB_OPPONENTS`): `reactionMs` 800→100ms, `stealFreq` 0.055→0.70, `shotAcc` 0.28→0.90.
-
-**Perspective court**: vanishing point at `(W/2, 182)`, bottom at y=548. `perspX(x0, y)` helper computes perspective x. Key drawn as trapezoid, free throw ellipse, three-point ellipse.
+**Constants**:
+- `BB_GOAL`: Score limit (5 baskets = 10 pts).
+- `BB_OPPONENTS`: Table of 3 opponents with increasing speed and difficulty.
+- `BB_TURBO_MAX/DRAIN/REGEN/MULT`: Turbo meter parameters.
+- `BB_PAINT_X`: X threshold for the paint/dunk zone.
+- `BB_STUN_DURATION`: Shove stun duration in ms.
+- `_BB`: Module-level persistent state for round tracking.
 
 ## Production
 
